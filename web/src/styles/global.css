@@ -1,0 +1,65 @@
+@font-face {
+  font-family: "Geist Variable";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("@fontsource-variable/geist/files/geist-latin-wght-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Geist Mono Variable";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("@fontsource-variable/geist-mono/files/geist-mono-latin-wght-normal.woff2") format("woff2");
+}
+:root {
+  color-scheme: dark;
+  --vk-bg: #101317;
+  --vk-surface-1: #191f24;
+  --vk-surface-2: #222a30;
+  --vk-surface-3: #2c353c;
+  --vk-border-subtle: #343d44;
+  --vk-border-strong: #53616b;
+  --vk-border-control: #687a87;
+  --vk-text-primary: #f1f3f4;
+  --vk-text-secondary: #b2bdc5;
+  --vk-text-muted: #8996a1;
+  --vk-accent: #b5f277;
+  --vk-accent-ink: #101317;
+  --vk-success: #69d8a0;
+  --vk-warning: #f2c66d;
+  --vk-critical: #f17d83;
+  --vk-info: #7db9f2;
+  --vk-unknown: #8995a0;
+  --vk-series-cpu: #7db9f2;
+  --vk-series-memory: #69d8c9;
+  --vk-series-storage: #f2c66d;
+  --vk-series-rx: #7db9f2;
+  --vk-series-tx: #c2a5f4;
+  --vk-radius-0: 0px;
+  --vk-radius-1: 2px;
+  --vk-radius-2: 4px;
+  --vk-stroke-1: 1px;
+  --vk-stroke-2: 2px;
+  --vk-space-1: 4px;
+  --vk-space-2: 8px;
+  --vk-space-3: 12px;
+  --vk-space-4: 16px;
+  --vk-space-6: 24px;
+  --vk-space-8: 32px;
+  --vk-space-10: 40px;
+  --vk-space-12: 48px;
+  --vk-font: "Geist Variable", system-ui, sans-serif;
+  --vk-mono: "Geist Mono Variable", ui-monospace, monospace;
+}
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; background: var(--vk-bg); color: var(--vk-text-primary); font: 14px/21px var(--vk-font); }
+h1, h2, h3, p, dl, dd { margin: 0; }
+button, input, select { font: inherit; }
+a { color: inherit; }
+:focus-visible { outline: var(--vk-stroke-2) solid var(--vk-accent); outline-offset: 2px; }
+::selection { background: var(--vk-accent); color: var(--vk-accent-ink); }
+dialog::backdrop { background: rgb(0 0 0 / 70%); }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}

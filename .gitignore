@@ -17,3 +17,10 @@ coverage.html
 # Local environment
 .env
 .env.*
+
+# Web build and browser test outputs
+/web/node_modules/
+/web/dist/
+/web/playwright-report/
+/web/test-results/
+/web/coverage/

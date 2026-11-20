@@ -1,0 +1,46 @@
+{
+  "name": "vektor-web",
+  "private": true,
+  "version": "0.3.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bun --bun vite --configLoader native",
+    "build": "bun run typecheck && bun --bun vite build --configLoader native",
+    "typecheck": "bun --bun tsc --noEmit",
+    "lint": "bun --bun eslint .",
+    "test": "bun --bun vitest run --configLoader native --pool threads",
+    "test:e2e": "bun run build && bun --bun playwright test",
+    "generate:api": "bun --bun openapi-typescript ../docs/openapi-v1.yaml -o src/lib/api/openapi.d.ts"
+  },
+  "packageManager": "bun@1.4.4",
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-router-dom": "^7.9.0",
+    "@tanstack/react-query": "^5.90.0",
+    "@stylexjs/stylex": "^0.19.0",
+    "@fontsource-variable/geist": "^5.2.0",
+    "@fontsource-variable/geist-mono": "^5.2.0",
+    "lucide-react": "^0.545.0"
+  },
+  "devDependencies": {
+    "@stylexjs/unplugin": "^0.19.0",
+    "@vitejs/plugin-react": "^6.1.0",
+    "@types/bun": "^1.3.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "vite": "^8.3.0",
+    "typescript": "~5.9.0",
+    "vitest": "^5.1.0",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/dom": "^10.4.0",
+    "happy-dom": "^20.0.0",
+    "eslint": "^9.39.0",
+    "@eslint/js": "^9.39.0",
+    "typescript-eslint": "^8.50.0",
+    "eslint-plugin-react-hooks": "^7.0.0",
+    "openapi-typescript": "^7.10.0",
+    "@playwright/test": "^1.57.0",
+    "@axe-core/playwright": "^4.11.0"
+  }
+}
