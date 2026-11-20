@@ -1,0 +1,19 @@
+# Binaries
+/vektord
+/bin/
+*.exe
+
+# SQLite databases and WAL sidecars
+*.db
+*.db-wal
+*.db-shm
+/data/
+
+# Test and coverage outputs
+*.out
+*.prof
+coverage.html
+
+# Local environment
+.env
+.env.*
