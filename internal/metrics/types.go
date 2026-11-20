@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 const HostResourceID = "host:local"
@@ -54,6 +56,22 @@ func (c *RealClock) Now() time.Time {
 
 func (c *RealClock) Monotonic() time.Duration {
 	return time.Since(c.anchor)
+}
+
+// Elapsed includes Linux system suspend time when checking the wall clock.
+func (c *RealClock) Elapsed() time.Duration {
+	var uptime unix.Timespec
+	if err := unix.ClockGettime(unix.CLOCK_BOOTTIME, &uptime); err != nil {
+		return c.Monotonic()
+	}
+	return time.Duration(uptime.Nano())
+}
+
+// Synchronized reads the Linux clock discipline status without adjusting the clock.
+func (c *RealClock) Synchronized() bool {
+	var timex unix.Timex
+	state, err := unix.Adjtimex(&timex)
+	return err == nil && state != unix.TIME_ERROR && timex.Maxerror >= 0 && timex.Maxerror <= 5_000_000
 }
 
 // FakeClock is a thread-safe deterministic Clock for unit and integration tests.

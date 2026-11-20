@@ -21,9 +21,9 @@ func TestQuerySeriesAutoStepCoverageGapsAndValidation(t *testing.T) {
 	now := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
 	clk := metrics.NewFakeClock(now)
 
-	writer := NewRawWriter(db, health, nil, clk)
+	writer := NewRawWriter(db, cfg, health, nil, clk)
 	rollup := NewRollupEngine(db, cfg, health, nil)
-	qs := NewQueryService(db, reg, cfg, health, clk)
+	qs := NewQueryService(db, reg, cfg, health)
 
 	// Seed 5m + 1h data 36h ago (beyond 24h raw retention), and 30s raw data 1h ago.
 	oldStart := now.Add(-36 * time.Hour).Truncate(time.Hour).UnixMilli()
@@ -139,5 +139,69 @@ func TestQuerySeriesAutoStepCoverageGapsAndValidation(t *testing.T) {
 	healthResp, err := qs.GetHealth(ctx)
 	if err != nil || !healthResp.DBPingOK || healthResp.DBBytes <= 0 {
 		t.Fatalf("GetHealth failed: %v %+v", err, healthResp)
+	}
+}
+
+func TestQueryUsesPopulatedTiersAndEffectiveCoverage(t *testing.T) {
+	ctx := context.Background()
+	db, reg := openTestDB(t)
+	cfg := config.Default()
+	cfg.PersistInterval = 10 * time.Second
+	start := time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC)
+	clk := metrics.NewFakeClock(start)
+	writer := NewRawWriter(db, cfg, nil, nil, clk)
+	query := NewQueryService(db, reg, cfg, nil)
+
+	filesystems, err := reg.Reconcile(ctx, host.KindFilesystem, []host.DiscoveredResource{{ExternalKey: "test-fs"}}, start.UnixMilli())
+	if err != nil || len(filesystems) != 1 {
+		t.Fatalf("register filesystem: %v", err)
+	}
+	var points []metrics.MetricPoint
+	for tick := range 30 {
+		ts := start.Add(time.Duration(tick) * cfg.PersistInterval).UnixMilli()
+		points = append(points, metrics.MetricPoint{ResourceID: host.HostResourceID, Key: metrics.KeyLoad1m, TimestampMs: ts, Value: 1, Valid: true})
+		if tick%6 == 0 {
+			points = append(points, metrics.MetricPoint{ResourceID: filesystems[0].ID, Key: metrics.KeyFilesystemUsedPct, TimestampMs: ts, Value: 1, Valid: true})
+		}
+	}
+	points = append(points, metrics.MetricPoint{ResourceID: host.HostResourceID, Key: metrics.KeyLoad1m, TimestampMs: start.Add(time.Hour).UnixMilli(), Value: 1, Valid: true})
+	if _, err := writer.WriteBatch(ctx, points); err != nil {
+		t.Fatal(err)
+	}
+	rollup := NewRollupEngine(db, cfg, nil, nil)
+	retention := NewRetentionEngine(db, cfg, nil, nil)
+	if _, err := rollup.Run(ctx, start.Add(3*time.Hour).UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+
+	q := SeriesQuery{Step: "5m", FromMs: start.UnixMilli(), ToMs: start.Add(5 * time.Minute).UnixMilli()}
+	for _, series := range []struct {
+		resource, key string
+		samples       int64
+	}{
+		{host.HostResourceID, metrics.KeyLoad1m, 10},
+		{filesystems[0].ID, metrics.KeyFilesystemUsedPct, 5},
+	} {
+		q.ResourceID, q.MetricKey = series.resource, series.key
+		res, err := query.QuerySeries(ctx, q)
+		if err != nil || len(res.Points) != 1 || res.Points[0].Coverage != 1 || res.Points[0].ExpectedSamples != series.samples {
+			t.Fatalf("%s coverage: %+v %v", series.key, res, err)
+		}
+	}
+
+	if _, err := retention.Run(ctx, start.Add(8*24*time.Hour).UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	q.ResourceID, q.MetricKey, q.Step = host.HostResourceID, metrics.KeyLoad1m, "auto"
+	res, err := query.QuerySeries(ctx, q)
+	if err != nil || res.ResolutionS != ResolutionLongS || len(res.Points) != 1 {
+		t.Fatalf("hourly-only series: %+v %v", res, err)
+	}
+	q.ToMs, q.MaxPoints = start.Add(2*time.Hour).UnixMilli(), 1
+	for _, step := range []string{"auto", "1h"} {
+		q.Step = step
+		if _, err := query.QuerySeries(ctx, q); err == nil {
+			t.Fatalf("step %s exceeded the point limit without error", step)
+		}
 	}
 }

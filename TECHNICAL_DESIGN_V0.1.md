@@ -1,6 +1,7 @@
 # Technical Design v0.1 — Metrics Engine & History Engine
 
-**Estado:** Proposta para implementação (revisão 1)  
+**Estado:** Implementado. O responsável pelo projeto confirmou o aceite no Ubuntu Server 26.04.1 LTS.
+
 **Plataforma:** Ubuntu Server 26.04 LTS (`amd64` inicialmente; `arm64` após validação)  
 **Escopo:** monitoramento local do host; sem gerenciamento de VMs/containers nesta versão  
 **Referência de estudo:** `BESZEL-TECHNICAL-RESEARCH.md`, Beszel commit `82a8fe60` (conclusões de análise estática, não contrato de implementação)
@@ -125,6 +126,8 @@ Scheduler com concorrência limitada (ex.: até 4 coletores rápidos). Cada cole
 
 Uma falha parcial gera log estruturado e omite as métricas afetadas, mas não invalida todo o ciclo. A última amostra pode ser exibida na UI como *stale*, nunca como atual sem marcação.
 
+A descoberta tem um único worker pendente. Os perfis rápido e ao vivo usam o último `boot_id` que a descoberta obteve, de modo que uma leitura bloqueada da descoberta não interrompe esses perfis. Sensores e filesystems têm dois slots cada e preservam os resultados que terminaram antes do timeout. Ao receber `SIGTERM`, o scheduler encerra os loops sem esperar pelos workers que ainda estão no kernel. Se todos os slots de uma classe estiverem ocupados por syscalls bloqueadas, a coleta daquela classe fica degradada. Em estado D, o kernel pode manter a tarefa pendente mesmo depois do encerramento solicitado ao processo.
+
 ### 4.3 CounterTracker
 
 Chave: `(profile, resource_id, metric_key)`; estado `prev_uint64`, `prev_monotonic_time`, `last_seen`, `boot_id`. Primeiro ponto: salvar baseline e retornar `no_value`. Para contador crescente: `delta = current - previous`; taxa = `delta / elapsed.Seconds()`. Para `current < previous`, identificar reset/recriação e **descartar um intervalo**, reinicializando baseline. Wrap 32-bit é tratado *somente* para campos Linux documentadamente sujeitos a esse wrap e quando há evidências plausíveis; não supor wrap para counters genéricos. Tempo decorrido `<= 0`: descartar. Mudança de `boot_id`: invalidar todos os baselines. Baselines live e persist são independentes e os live são descartados ao fechar última sessão. Evict de recursos ausentes após janela configurada.
@@ -213,7 +216,7 @@ O loop persistente produz métricas válidas; agrupa cada `timestamp` em `bucket
 
 Os buckets são UTC, com fronteiras inteiras: `5m=300s`, `1h=3600s`. A cada 5 minutos, processar **apenas janelas fechadas** (grace de 60 s para atrasos) e todas as janelas pendentes desde o watermark. Um `INSERT ... SELECT` com agregação dos filhos cria/atualiza o bucket pai; a transação grava bucket(s) e avanço do `rollup_state` conjuntamente. Usar `UPSERT` de substituição, nunca incremento cego. Uma janela sem filhos não gera ponto; uma janela parcialmente coberta gera bucket com count real. Reexecutar após crash mantém resultados idênticos.
 
-**Condição essencial:** não remover fonte antes de consolidar buckets descendentes cuja retenção ainda exige a fonte. Para evitar lacunas em janela atrasada, processar `raw→5m` e `5m→1h` em ordem antes da limpeza. Definir estratégia para atraso maior que retenção raw: sinalizar dados irrecuperáveis, não criar dados inventados.
+Uma alteração raw em janela fechada insere a correção pendente em `rollup_dirty` na mesma transação da amostra. O reparo recalcula os buckets de 5 minutos e os buckets horários já fechados, depois remove a pendência na mesma transação. A retenção avalia as pendências dentro da transação de exclusão e preserva janelas de origem inteiras. A fronteira da retenção raw é gravada junto da exclusão. O writer recusa um reenvio anterior a essa fronteira ou fora da retenção configurada.
 
 ### 7.3 Retenção default
 
@@ -233,7 +236,15 @@ Retenção roda em lotes indexados, após rollups, e mantém o SQLite em limites
 - **Dispositivo removido:** marca `active=0`, preserva histórico até expirar.
 - **Reboot:** `boot_id` novo reinicializa baselines e loops, rollups alcançam buckets pendentes.
 - **Disco cheio/SQLite_BUSY:** registro estruturado, health `degraded`, retry com backoff limitado; não loop infinito de escrita.
-- **Mudança de horário/NTP:** cálculo de taxa usa relógio monotônico; buckets usam UTC; saltos de wall clock geram lacunas/alertas de qualidade, nunca deltas negativos.
+- **Mudança de horário/NTP:** taxas usam relógio monotônico e buckets usam UTC. As operações históricas seguem a política abaixo.
+
+### 7.5 Confiança no relógio UTC
+
+Em produção, o daemon exige que o Linux reporte sincronização via `adjtimex` em modo de leitura e informe erro máximo de até 5 segundos. Essa sinalização depende de uma fonte de tempo confiável configurada no host. A estabilidade em relação a `CLOCK_BOOTTIME` detecta saltos, e a maior marca persistida entre amostras raw e watermarks limita quanto o relógio pode retroceder. O relógio também deve ficar a até 5 segundos da última referência aceita em execução. [Linux man-pages, adjtimex(2)](https://man7.org/linux/man-pages/man2/adjtimex.2.html)
+
+No boot, um relógio sem sincronização ou mais de 5 segundos atrás do histórico deixa o daemon em `degraded`. A coleta rápida pode continuar. Gravações de amostras e inventário, rollups e retenção ficam suspensos. Depois de uma pausa, o daemon exige 30 segundos de estabilidade observada e confirmação de sincronização para retomar automaticamente no próximo ciclo. `vektord --check` mostra a causa em `health.clock_error`. Em um banco novo ainda sem inventário, o diagnóstico pode retornar `host: null`.
+
+O daemon confia na fonte configurada pelo sistema. Se essa fonte certificar uma hora errada à frente, a estabilidade e o histórico local, por si sós, não permitem distingui-la de um desligamento longo. Um histórico já marcado no futuro mantém a proteção ativa até o relógio alcançar a marca ou o operador resolver a inconsistência.
 
 ## 8. Contratos de consulta (para etapa REST posterior)
 
@@ -264,6 +275,7 @@ O SSE de 2 s deve enviar snapshots efêmeros para vários assinantes por único 
 |---|---|---|
 | Counter | Primeira coleta | Nenhuma taxa falsa |
 | Counter | Reset, wrap 32-bit, reboot | Taxas não negativas e sem picos artificiais |
+| Relógio | Boot sem sincronização e saltos nos dois sentidos | Escritas e manutenção pausam com causa visível, retomam após sincronização estável e preservam o histórico |
 | Counter | Intercala live/persist | Baselines independentes |
 | Scheduler | Coletor bloqueado | Outros coletores continuam e não há crescimento ilimitado de goroutines |
 | Discovery | NIC/disco adicionado/removido | Reconciliação preserva histórico e não duplica recurso |
@@ -277,6 +289,14 @@ O SSE de 2 s deve enviar snapshots efêmeros para vários assinantes por único 
 | Performance | 24 h de execução | RSS, CPU, I/O, tamanho do banco e latência medidos e registrados |
 
 **Metas provisórias (não verificadas):** CPU média em idle `<1%` de um core; RSS do processo `<100 MiB` em host pequeno; latência P95 de coleta rápida `<250 ms` em hardware de teste. Não tornar essas metas bloqueantes até definir máquina de referência. Benchmark deve registrar CPU, RAM, tamanho do SQLite/WAL, taxa de escrita, número de recursos e período de coleta.
+
+### Aceite manual no Ubuntu Server 26.04.1 LTS
+
+Execute em uma VM descartável, com dados temporários e a fonte de tempo conhecida. Registre `/etc/os-release`, `uname -r`, saída de `vektord --check` e os logs do daemon.
+
+1. Com NTP sincronizado, grave uma amostra e registre a contagem e os watermarks do SQLite. Teste inicialização com hora incorreta e saltos para frente e para trás enquanto o daemon roda. Faça a mudança de hora somente dentro da VM. Confirme `degraded`, ausência de escrita histórica e retenção pausada. Restaure o NTP, observe a retomada automática e compare com a leitura anterior do SQLite.
+2. Execute `TestStartupAndShutdownWithStalledSlowProbes` e `TestDiscoveryWaitIsCancellableAndCannotOverlap`. Se reproduzir estado D em kernel real, registre `ps -o pid,stat,wchan` e a latência entre `SIGTERM` e a mensagem de encerramento do scheduler. Registre separadamente quando o kernel liberou a tarefa.
+3. Execute `TestLateSampleSurvivesKillAndRestart`. Guarde a saída dos seis pontos de interrupção. O teste reabre o WAL, verifica a integridade do SQLite, faz replay e compara estatísticas e cobertura nos dois níveis.
 
 ## 11. Ordem de implementação
 

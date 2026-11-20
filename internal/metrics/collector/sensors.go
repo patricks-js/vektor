@@ -60,18 +60,13 @@ func (c *SensorCollector) Collect(ctx context.Context) (metrics.RawSnapshot, err
 		return snap, nil
 	}
 
-	type result struct {
-		target SensorTarget
-		val    float64
-		ts     time.Time
-		mono   time.Duration
-		err    error
-	}
-
-	resCh := make(chan result, len(targets))
+	resCh := make(chan error, len(targets))
 	launched := 0
 
 	for _, tg := range targets {
+		if ctx.Err() != nil {
+			break
+		}
 		c.inFlightMu.Lock()
 		busy := c.inFlight[tg.InputPath]
 		if !busy {
@@ -99,36 +94,33 @@ func (c *SensorCollector) Collect(ctx context.Context) (metrics.RawSnapshot, err
 				c.clearInFlight(target.InputPath)
 			}()
 			val, err := readSensorCelsius(target.InputPath)
-			resCh <- result{
-				target: target,
-				val:    val,
-				ts:     c.clock.Now(),
-				mono:   c.clock.Monotonic(),
-				err:    err,
+			if err != nil {
+				resCh <- fmt.Errorf("read sensor %s: %w", target.InputPath, err)
+				return
 			}
+			if ctx.Err() == nil {
+				c.cacheMu.Lock()
+				c.cache[target.ResourceID] = cachedSensorReading{
+					ResourceID: target.ResourceID,
+					ObservedAt: c.clock.Now(),
+					Mono:       c.clock.Monotonic(),
+					Celsius:    val,
+				}
+				c.cacheMu.Unlock()
+			}
+			resCh <- nil
 		}(tg)
 	}
 
-	collected := 0
 waitLoop:
-	for collected < launched {
+	for range launched {
 		select {
-		case r := <-resCh:
-			collected++
-			if r.err != nil {
-				snap.Warnings = append(snap.Warnings, fmt.Errorf("read sensor %s: %w", r.target.InputPath, r.err))
-				continue
+		case err := <-resCh:
+			if err != nil {
+				snap.Warnings = append(snap.Warnings, err)
 			}
-			c.cacheMu.Lock()
-			c.cache[r.target.ResourceID] = cachedSensorReading{
-				ResourceID: r.target.ResourceID,
-				Celsius:    r.val,
-				ObservedAt: r.ts,
-				Mono:       r.mono,
-			}
-			c.cacheMu.Unlock()
 		case <-ctx.Done():
-			snap.Warnings = append(snap.Warnings, fmt.Errorf("sensor collect timed out waiting for %d probe(s): %w", launched-collected, ctx.Err()))
+			snap.Warnings = append(snap.Warnings, fmt.Errorf("sensor collect stopped waiting: %w", ctx.Err()))
 			break waitLoop
 		}
 	}

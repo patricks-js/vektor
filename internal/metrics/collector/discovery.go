@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"vektor/internal/host"
 )
@@ -94,22 +95,6 @@ func (t *Topology) Sensors() []SensorTarget {
 	return out
 }
 
-func (t *Topology) replace(
-	disks map[string]string,
-	nics map[string]NICTarget,
-	includeInHostNet map[string]bool,
-	filesystems []FilesystemTarget,
-	sensors []SensorTarget,
-) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.disks = disks
-	t.nics = nics
-	t.includeInHostNet = includeInHostNet
-	t.filesystems = filesystems
-	t.sensors = sensors
-}
-
 // DiscoveredDisk describes a discovered block or device-mapper disk.
 type DiscoveredDisk struct {
 	KernelName string
@@ -161,6 +146,8 @@ type DiscoveredNIC struct {
 	ExternalKey  string
 	DisplayName  string
 	MetadataJSON string
+	portName     string
+	devPort      string
 }
 
 // DiscoveredSensor describes a discovered hwmon temperature sensor channel.
@@ -561,6 +548,8 @@ func (d *Discovery) DiscoverNICs() ([]DiscoveredNIC, error) {
 			IsBridge:   isBridge,
 			IsBond:     isBond,
 			Master:     master,
+			portName:   readTrimmed(filepath.Join(ifaceDir, "phys_port_name")),
+			devPort:    readTrimmed(filepath.Join(ifaceDir, "dev_port")),
 		}
 		raw = append(raw, nic)
 	}
@@ -609,6 +598,8 @@ func (d *Discovery) DiscoverNICs() ([]DiscoveredNIC, error) {
 		}
 		if nic.PCIAddr != "" {
 			metaObj["pci_addr"] = nic.PCIAddr
+			metaObj["phys_port_name"] = nic.portName
+			metaObj["dev_port"] = nic.devPort
 		}
 		if nic.Master != "" {
 			metaObj["master"] = nic.Master
@@ -617,6 +608,7 @@ func (d *Discovery) DiscoverNICs() ([]DiscoveredNIC, error) {
 		nic.MetadataJSON = string(metaBytes)
 	}
 
+	disambiguateNICs(raw, nil)
 	sort.Slice(raw, func(i, j int) bool { return raw[i].Name < raw[j].Name })
 	return raw, nil
 }
@@ -633,6 +625,81 @@ func nicExternalKey(nic DiscoveredNIC) string {
 
 func isUsableMAC(mac string) bool {
 	return mac != "" && mac != "00:00:00:00:00:00"
+}
+
+func nicPortKeys(nic DiscoveredNIC, base string) []string {
+	var keys []string
+	if nic.portName != "" {
+		keys = append(keys, base+"/port:"+nic.portName)
+	}
+	if nic.devPort != "" {
+		keys = append(keys, base+"/dev_port:"+nic.devPort)
+	}
+	if isUsableMAC(nic.MAC) {
+		keys = append(keys, base+"/mac:"+nic.MAC)
+	}
+	return append(keys, base+"/iface:"+nic.Name)
+}
+
+func disambiguateNICs(nics []DiscoveredNIC, existing []host.Resource) {
+	byKey := make(map[string]host.Resource, len(existing))
+	split := make(map[string]bool)
+	for _, resource := range existing {
+		byKey[resource.ExternalKey] = resource
+		if base, _, ok := strings.Cut(resource.ExternalKey, "/"); ok {
+			split[base] = true
+		}
+	}
+	counts := make(map[string]int)
+	legacyOwners := make(map[string][]int)
+	for i, nic := range nics {
+		base := nicExternalKey(nic)
+		counts[base]++
+		for _, key := range nicPortKeys(nic, base) {
+			counts[key]++
+		}
+		var old struct {
+			MAC      string `json:"mac"`
+			PortName string `json:"phys_port_name"`
+			DevPort  string `json:"dev_port"`
+		}
+		if resource, ok := byKey[base]; ok && json.Unmarshal([]byte(resource.MetadataJSON), &old) == nil {
+			if (old.PortName != "" && old.PortName == nic.portName) ||
+				(old.DevPort != "" && old.DevPort == nic.devPort) ||
+				(isUsableMAC(old.MAC) && old.MAC == nic.MAC) ||
+				(!isUsableMAC(old.MAC) && old.PortName == "" && old.DevPort == "" && resource.DisplayName == nic.Name) {
+				legacyOwners[base] = append(legacyOwners[base], i)
+			}
+		}
+	}
+	for i, nic := range nics {
+		base := nicExternalKey(nic)
+		if !split[base] && counts[base] == 1 {
+			nics[i].ExternalKey = base
+			continue
+		}
+		var key, prior string
+		for _, candidate := range nicPortKeys(nic, base) {
+			if counts[candidate] != 1 {
+				continue
+			}
+			if key == "" {
+				key = candidate
+			}
+			if _, exists := byKey[candidate]; exists {
+				prior = candidate
+				break
+			}
+		}
+		owners := legacyOwners[base]
+		switch {
+		case prior != "":
+			key = prior
+		case len(owners) == 1 && owners[0] == i:
+			key = base
+		}
+		nics[i].ExternalKey = key
+	}
 }
 
 // DiscoverSensors scans <sysRoot>/class/hwmon/hwmon* for temperature inputs (`temp*_input`).
@@ -725,14 +792,24 @@ func (d *Discovery) DiscoverSensors() ([]DiscoveredSensor, error) {
 	return out, nil
 }
 
-// ReconcileAll runs Linux discovery, updates SQLite Registry preserving inactive history,
-// and atomically refreshes the in-memory Topology used by collectors and Normalizer.
-func (d *Discovery) ReconcileAll(ctx context.Context, reg *host.Registry, nowMs int64, includePerCoreCPU bool, cpuThreads int) error {
+// ReconcileAll refreshes each resource kind after its registry transaction succeeds.
+func (d *Discovery) ReconcileAll(ctx context.Context, reg *host.Registry, nowMs int64, includePerCoreCPU bool) error {
 	var errs []error
 
-	if includePerCoreCPU && cpuThreads > 0 {
-		if _, err := reg.EnsureCPUCores(ctx, cpuThreads, nowMs); err != nil {
-			errs = append(errs, fmt.Errorf("reconcile cpu_cores: %w", err))
+	if includePerCoreCPU {
+		samples, err := readCPUStat(d.procRoot, true, time.Time{}, 0)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("discover cpu_cores: %w", err))
+		} else {
+			var cores []string
+			for _, sample := range samples {
+				if sample.ResourceID != host.HostResourceID {
+					cores = append(cores, sample.Core)
+				}
+			}
+			if _, err := reg.EnsureCPUCores(ctx, cores, nowMs); err != nil {
+				errs = append(errs, fmt.Errorf("reconcile cpu_cores: %w", err))
+			}
 		}
 	}
 
@@ -757,9 +834,15 @@ func (d *Discovery) ReconcileAll(ctx context.Context, reg *host.Registry, nowMs 
 					diskMap[dk.KernelName] = id
 				}
 			}
+			d.topology.mu.Lock()
+			d.topology.disks = diskMap
+			d.topology.mu.Unlock()
 		}
 	}
 
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	var fsTargets []FilesystemTarget
 	if filesystems, err := d.DiscoverFilesystems(); err != nil {
 		errs = append(errs, fmt.Errorf("discover filesystems: %w", err))
@@ -786,14 +869,23 @@ func (d *Discovery) ReconcileAll(ctx context.Context, reg *host.Registry, nowMs 
 					})
 				}
 			}
+			d.topology.mu.Lock()
+			d.topology.filesystems = fsTargets
+			d.topology.mu.Unlock()
 		}
 	}
 
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	nicMap := make(map[string]NICTarget)
 	includeNetMap := make(map[string]bool)
 	if nics, err := d.DiscoverNICs(); err != nil {
 		errs = append(errs, fmt.Errorf("discover nics: %w", err))
+	} else if existing, err := reg.List(ctx, host.KindNIC, true); err != nil {
+		errs = append(errs, fmt.Errorf("read existing nics: %w", err))
 	} else {
+		disambiguateNICs(nics, existing)
 		items := make([]host.DiscoveredResource, 0, len(nics))
 		for _, nic := range nics {
 			items = append(items, host.DiscoveredResource{
@@ -815,9 +907,15 @@ func (d *Discovery) ReconcileAll(ctx context.Context, reg *host.Registry, nowMs 
 					includeNetMap[id] = nic.IncludeInHostAggregate
 				}
 			}
+			d.topology.mu.Lock()
+			d.topology.nics, d.topology.includeInHostNet = nicMap, includeNetMap
+			d.topology.mu.Unlock()
 		}
 	}
 
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	var sensorTargets []SensorTarget
 	if sensors, err := d.DiscoverSensors(); err != nil {
 		errs = append(errs, fmt.Errorf("discover sensors: %w", err))
@@ -844,10 +942,12 @@ func (d *Discovery) ReconcileAll(ctx context.Context, reg *host.Registry, nowMs 
 					})
 				}
 			}
+			d.topology.mu.Lock()
+			d.topology.sensors = sensorTargets
+			d.topology.mu.Unlock()
 		}
 	}
 
-	d.topology.replace(diskMap, nicMap, includeNetMap, fsTargets, sensorTargets)
 	return errors.Join(errs...)
 }
 
@@ -895,7 +995,7 @@ func unescapeOctal(s string) string {
 			s[i+1] >= '0' && s[i+1] <= '7' &&
 			s[i+2] >= '0' && s[i+2] <= '7' &&
 			s[i+3] >= '0' && s[i+3] <= '7' {
-			val := (s[i+1]-'0')*64 + (s[i+2]-'0')*8 + (s[i+3]-'0')
+			val := (s[i+1]-'0')*64 + (s[i+2]-'0')*8 + (s[i+3] - '0')
 			b.WriteByte(val)
 			i += 3
 			continue

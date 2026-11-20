@@ -140,8 +140,13 @@ func TestUbuntuLVMBridgesBondsSensorsDiscoveryAndNoNetDoubleCount(t *testing.T) 
 	}
 
 	disc := NewDiscovery(proc, sys, devDisk, cfg.ExcludedFSTypes, true)
-	if err := disc.ReconcileAll(ctx, reg, 1000, true, 4); err != nil {
+	writeFixtureFile(t, proc, "stat", "cpu 10 0 0 10\ncpu0 5 0 0 5\ncpu2 5 0 0 5\n")
+	if err := disc.ReconcileAll(ctx, reg, 1000, true); err != nil {
 		t.Fatalf("ReconcileAll: %v", err)
+	}
+	cores, err := reg.List(ctx, host.KindCPUCore, false)
+	if err != nil || len(cores) != 2 || cores[0].ID != "cpu:0" || cores[1].ID != "cpu:2" {
+		t.Fatalf("expected real CPU IDs 0 and 2: %+v, %v", cores, err)
 	}
 
 	// Verify disks: dm-0 + nvme0n1 only (no loop0/zram0).
@@ -254,6 +259,59 @@ func TestUbuntuLVMBridgesBondsSensorsDiscoveryAndNoNetDoubleCount(t *testing.T) 
 	}
 }
 
+func TestSharedDeviceNICsKeepSeparatePersistentIDs(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	proc := filepath.Join(root, "proc")
+	sys := filepath.Join(root, "sys")
+	writeFixtureFile(t, proc, "self/mountinfo", "")
+	if err := os.MkdirAll(filepath.Join(sys, "block"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	addPort := func(name, mac, port string) {
+		t.Helper()
+		iface := "class/net/" + name
+		writeFixtureFile(t, sys, iface+"/address", mac)
+		writeFixtureFile(t, sys, iface+"/dev_port", port)
+		createSymlink(t, sys, iface+"/device", "../../../devices/pci0000:00/0000:01:00.0")
+	}
+	cfg := config.Default()
+	cfg.DataDir = filepath.Join(root, "db")
+	db, err := database.Open(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	reg := host.NewRegistry(db)
+	disc := NewDiscovery(proc, sys, filepath.Join(root, "dev"), nil, false)
+	discover := func() map[string]NICTarget {
+		t.Helper()
+		if err := disc.ReconcileAll(ctx, reg, 1000, false); err != nil {
+			t.Fatal(err)
+		}
+		return disc.Topology().NICLookup()
+	}
+
+	addPort("eth0", "52:54:00:aa:11:01", "0")
+	original := discover()["eth0"].ResourceID
+	addPort("eth1", "52:54:00:aa:11:02", "1")
+	targets := discover()
+	second := targets["eth1"].ResourceID
+	if original == "" || second == "" || second == original || targets["eth0"].ResourceID != original {
+		t.Fatalf("expected separate ports and preservation of the legacy ID: %+v", targets)
+	}
+
+	if err := os.Rename(filepath.Join(sys, "class/net/eth0"), filepath.Join(root, "offline")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(sys, "class/net/eth1"), filepath.Join(sys, "class/net/enp1s0")); err != nil {
+		t.Fatal(err)
+	}
+	if target := discover()["enp1s0"]; target.ResourceID != second {
+		t.Fatalf("remaining renamed port changed ID: %+v", target)
+	}
+}
+
 func TestFilesystemCollectorStalledMountIsolationAndInFlightGuard(t *testing.T) {
 	clk := metrics.NewFakeClock(time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC))
 	targets := []FilesystemTarget{
@@ -338,7 +396,7 @@ func TestDiscoveryAddRemoveReAddPreservesHistoryAndTopology(t *testing.T) {
 	_ = reg.EnsureHost(ctx, host.Inventory{Hostname: "hotplug", BootID: "boot-1"}, 1000)
 
 	disc := NewDiscovery(proc, sys, devDisk, cfg.ExcludedFSTypes, true)
-	if err := disc.ReconcileAll(ctx, reg, 1000, false, 1); err != nil {
+	if err := disc.ReconcileAll(ctx, reg, 1000, false); err != nil {
 		t.Fatalf("ReconcileAll 1: %v", err)
 	}
 	sdaID := disc.Topology().DiskLookup()["sda"]
@@ -348,7 +406,7 @@ func TestDiscoveryAddRemoveReAddPreservesHistoryAndTopology(t *testing.T) {
 
 	// Unplug sda -> active=0 in DB, removed from Topology, history preserved.
 	_ = os.RemoveAll(filepath.Join(sys, "block/sda"))
-	if err := disc.ReconcileAll(ctx, reg, 2000, false, 1); err != nil {
+	if err := disc.ReconcileAll(ctx, reg, 2000, false); err != nil {
 		t.Fatalf("ReconcileAll 2: %v", err)
 	}
 	if _, stillInTopo := disc.Topology().DiskLookup()["sda"]; stillInTopo {
@@ -362,7 +420,7 @@ func TestDiscoveryAddRemoveReAddPreservesHistoryAndTopology(t *testing.T) {
 	// Replug USB disk under different kernel name sdb with SAME hardware serial -> reactivates SAME sdaID!
 	writeFixtureFile(t, sys, "block/sdb/size", "500000\n")
 	writeFixtureFile(t, sys, "block/sdb/device/serial", "USB-BACKUP-1\n")
-	if err := disc.ReconcileAll(ctx, reg, 3000, false, 1); err != nil {
+	if err := disc.ReconcileAll(ctx, reg, 3000, false); err != nil {
 		t.Fatalf("ReconcileAll 3: %v", err)
 	}
 	if gotID := disc.Topology().DiskLookup()["sdb"]; gotID != sdaID {

@@ -51,17 +51,12 @@ func (c *CPUCollector) Collect(ctx context.Context) (metrics.RawSnapshot, error)
 
 	var statOK, loadOK bool
 
-	statBytes, statErr := readFileBounded(filepath.Join(c.procRoot, "stat"), maxProcSysFileBytes)
+	cpuSamples, statErr := readCPUStat(c.procRoot, c.includePerCore, now, mono)
 	if statErr != nil {
-		snap.Warnings = append(snap.Warnings, fmt.Errorf("read /proc/stat: %w", statErr))
+		snap.Warnings = append(snap.Warnings, fmt.Errorf("/proc/stat: %w", statErr))
 	} else {
-		cpuSamples, parseErr := parseProcStat(statBytes, c.includePerCore, now, mono)
-		if parseErr != nil {
-			snap.Warnings = append(snap.Warnings, fmt.Errorf("parse /proc/stat: %w", parseErr))
-		} else {
-			snap.CPUSamples = cpuSamples
-			statOK = true
-		}
+		snap.CPUSamples = cpuSamples
+		statOK = true
 	}
 
 	loadBytes, loadErr := readFileBounded(filepath.Join(c.procRoot, "loadavg"), 4096)
@@ -81,6 +76,14 @@ func (c *CPUCollector) Collect(ctx context.Context) (metrics.RawSnapshot, error)
 		return snap, errors.Join(snap.Warnings...)
 	}
 	return snap, nil
+}
+
+func readCPUStat(procRoot string, includePerCore bool, now time.Time, mono time.Duration) ([]metrics.CPUSample, error) {
+	data, err := readFileBounded(filepath.Join(procRoot, "stat"), maxProcSysFileBytes)
+	if err != nil {
+		return nil, err
+	}
+	return parseProcStat(data, includePerCore, now, mono)
 }
 
 func parseProcStat(data []byte, includePerCore bool, now time.Time, mono time.Duration) ([]metrics.CPUSample, error) {

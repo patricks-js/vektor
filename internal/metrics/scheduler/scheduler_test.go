@@ -2,8 +2,12 @@ package scheduler
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"runtime"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -12,6 +16,7 @@ import (
 	"vektor/internal/history"
 	"vektor/internal/host"
 	"vektor/internal/metrics"
+	"vektor/internal/metrics/collector"
 	"vektor/internal/metrics/tracker"
 	"vektor/internal/observability"
 )
@@ -47,7 +52,7 @@ func TestBlockedCollectorDoesNotStallSiblingsOrLeakGoroutines(t *testing.T) {
 	health := observability.NewHealthTracker()
 	norm := tracker.NewNormalizer(nil)
 	db, reg := openSchedulerTestDB(t)
-	writer := history.NewRawWriter(db, health, nil, clk)
+	writer := history.NewRawWriter(db, config.Default(), health, nil, clk)
 
 	releaseHung := make(chan struct{})
 	defer close(releaseHung)
@@ -126,7 +131,7 @@ func TestLiveHubOnDemandZeroSQLiteWritesAndSlowSubscriberDrop(t *testing.T) {
 	health := observability.NewHealthTracker()
 	norm := tracker.NewNormalizer(nil)
 	db, reg := openSchedulerTestDB(t)
-	writer := history.NewRawWriter(db, health, nil, clk)
+	writer := history.NewRawWriter(db, config.Default(), health, nil, clk)
 
 	var rxBytes atomic.Uint64
 	rxBytes.Store(1000)
@@ -243,4 +248,323 @@ func TestLiveHubOnDemandZeroSQLiteWritesAndSlowSubscriberDrop(t *testing.T) {
 
 	cancelRun()
 	<-doneCh
+}
+
+func TestOverlappingLiveAndPersistShareFastSample(t *testing.T) {
+	ctx := context.Background()
+	clk := metrics.NewFakeClock(time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC))
+	cfg := config.Default()
+	db, _ := openSchedulerTestDB(t)
+	hub := NewLiveHub(nil, nil, nil)
+	_, live, unsubscribe := hub.Subscribe()
+	defer unsubscribe()
+	started, release := make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	col := &stubCollector{name: "shared", fn: func(ctx context.Context) (metrics.RawSnapshot, error) {
+		if calls.Add(1) == 1 {
+			close(started)
+		}
+		<-release
+		return metrics.RawSnapshot{Samples: []metrics.RawSample{
+			metrics.NewGaugeSample(host.HostResourceID, metrics.KeyLoad1m, 3, clk.Now(), clk.Monotonic()),
+		}}, nil
+	}}
+	sched := New(Deps{
+		Config: cfg, Clock: clk, LiveHub: hub, Normalizer: tracker.NewNormalizer(nil),
+		FastCollectors: []metrics.Collector{col}, RawWriter: history.NewRawWriter(db, cfg, nil, nil, clk),
+	})
+	liveDone := make(chan error, 1)
+	go func() { liveDone <- sched.RunLiveOnce(ctx) }()
+	<-started
+	persistDone := make(chan error, 1)
+	go func() { persistDone <- sched.RunPersistOnce(ctx) }()
+	select {
+	case err := <-persistDone:
+		close(release)
+		t.Fatalf("persistence skipped the running collector: %v", err)
+	case <-time.After(20 * time.Millisecond):
+		close(release)
+	}
+	if err := <-liveDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-persistDone; err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 1 || len((<-live).Points) != 1 {
+		t.Fatalf("expected one collection and a live point, calls = %d", calls.Load())
+	}
+	var n int
+	if err := db.Reader().QueryRowContext(ctx, "SELECT COUNT(*) FROM metric_buckets").Scan(&n); err != nil || n != 1 {
+		t.Fatalf("expected the same reading in SQLite: %d, %v", n, err)
+	}
+}
+
+func TestMaintenancePausesWhenWallTimeJumps(t *testing.T) {
+	ctx := context.Background()
+	start := time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC)
+	clk := metrics.NewFakeClock(start)
+	db, reg := openSchedulerTestDB(t)
+	cfg := config.Default()
+	writer := history.NewRawWriter(db, cfg, nil, nil, clk)
+	if _, err := writer.WriteBatch(ctx, []metrics.MetricPoint{{
+		ResourceID: host.HostResourceID, Key: metrics.KeyLoad1m, TimestampMs: start.UnixMilli(), Value: 20, Valid: true,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	maint := history.NewMaintenanceRunner(db, history.NewRollupEngine(db, cfg, nil, nil), history.NewRetentionEngine(db, cfg, nil, nil), nil)
+	fs, err := reg.Reconcile(ctx, host.KindFilesystem, []host.DiscoveredResource{{ExternalKey: "test-fs"}}, start.UnixMilli())
+	if err != nil || len(fs) != 1 {
+		t.Fatalf("register filesystem: %v", err)
+	}
+	fsCollector := collector.NewFilesystemCollector(clk, func() []collector.FilesystemTarget {
+		return []collector.FilesystemTarget{{ResourceID: fs[0].ID, Mountpoint: "/"}}
+	}, func(string) (collector.FSStat, error) { return collector.FSStat{TotalBytes: 10}, nil })
+	syncOK := true
+	sched := New(Deps{Config: cfg, Clock: clk, Maintenance: maint, RawWriter: writer,
+		FSCollector: fsCollector, Normalizer: tracker.NewNormalizer(nil), ClockSynchronized: func() bool { return syncOK }})
+	clk.Advance(time.Hour + time.Minute)
+	if err := sched.RunMaintenanceOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	clk.Step(91*24*time.Hour, time.Minute)
+	syncOK = false
+	if err := sched.RunSlowFSOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := sched.RunMaintenanceOnce(ctx); err == nil {
+		t.Fatal("maintenance ran with an untrusted wall clock")
+	}
+	clk.Advance(time.Minute)
+	if err := sched.RunPersistOnce(ctx); !errors.Is(err, ErrClockUntrusted) {
+		t.Fatalf("a stable but unsynchronized clock enabled writes: %v", err)
+	}
+	var count int
+	var watermark int64
+	err = db.Reader().QueryRowContext(ctx, `
+		SELECT (SELECT COUNT(*) FROM metric_buckets),
+		       (SELECT closed_through_ms FROM rollup_state WHERE resolution_s = 300)
+	`).Scan(&count, &watermark)
+	if err != nil || count != 3 || watermark != start.Add(time.Hour).UnixMilli() {
+		t.Fatalf("clock jump changed history: buckets=%d watermark=%d err=%v", count, watermark, err)
+	}
+	clk.Step(-91*24*time.Hour+2*time.Minute, time.Minute)
+	syncOK = true
+	if err := sched.RunMaintenanceOnce(ctx); !errors.Is(err, ErrClockUntrusted) {
+		t.Fatalf("recovery skipped stabilization: %v", err)
+	}
+	clk.Advance(clockRecovery)
+	if err := sched.RunMaintenanceOnce(ctx); err != nil {
+		t.Fatalf("maintenance did not resume on clock correction: %v", err)
+	}
+	if err := sched.RunPersistOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Reader().QueryRowContext(ctx, "SELECT COUNT(*) FROM metric_buckets WHERE resource_id = ?", fs[0].ID).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("filesystem reading taken during the jump entered history: count=%d err=%v", count, err)
+	}
+}
+
+func TestClockTrustAtStartupAndBackwardStep(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		initialShift time.Duration
+		step         time.Duration
+		syncOK       bool
+	}{
+		{"boot-already-ahead", 91 * 24 * time.Hour, 0, false},
+		{"boot-behind-history-even-if-synchronized", -2 * time.Hour, 0, true},
+		{"backward-step-before-first-write", 0, -2 * time.Hour, true},
+		{"forward-step-before-first-write", 0, 91 * 24 * time.Hour, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			start := time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC)
+			cfg := config.Default()
+			db, reg := openSchedulerTestDB(t)
+			clk := metrics.NewFakeClock(start)
+			health := observability.NewHealthTracker()
+			writer := history.NewRawWriter(db, cfg, health, nil, clk)
+			if _, err := writer.WriteBatch(ctx, []metrics.MetricPoint{{
+				ResourceID: host.HostResourceID, Key: metrics.KeyLoad1m, TimestampMs: start.UnixMilli(), Value: 20, Valid: true,
+			}}); err != nil {
+				t.Fatal(err)
+			}
+			query := history.NewQueryService(db, reg, cfg, health)
+			floor, err := query.ClockFloor(ctx)
+			if err != nil || !floor.Equal(start) {
+				t.Fatalf("durable clock floor = %v, err = %v", floor, err)
+			}
+			clk.SetWall(start.Add(tc.initialShift))
+			synced := tc.syncOK
+			col := &stubCollector{name: "load", fn: func(context.Context) (metrics.RawSnapshot, error) {
+				ts, mono := clk.Now(), clk.Monotonic()
+				return metrics.RawSnapshot{CollectedAt: ts, Monotonic: mono, Samples: []metrics.RawSample{
+					metrics.NewGaugeSample(host.HostResourceID, metrics.KeyLoad1m, 80, ts, mono),
+				}}, nil
+			}}
+			maintenance := history.NewMaintenanceRunner(db, history.NewRollupEngine(db, cfg, health, nil), history.NewRetentionEngine(db, cfg, health, nil), nil)
+			sched := New(Deps{Config: cfg, Clock: clk, ClockFloor: floor, Health: health, Normalizer: tracker.NewNormalizer(nil),
+				ClockSynchronized: func() bool { return synced }, FastCollectors: []metrics.Collector{col}, RawWriter: writer, Maintenance: maintenance})
+			clk.Step(tc.step+time.Second, time.Second)
+			for range 3 {
+				if err := sched.RunPersistOnce(ctx); !errors.Is(err, ErrClockUntrusted) {
+					t.Fatalf("write with untrusted time: %v", err)
+				}
+				if err := sched.RunMaintenanceOnce(ctx); !errors.Is(err, ErrClockUntrusted) {
+					t.Fatalf("maintenance with untrusted time: %v", err)
+				}
+				clk.Advance(time.Minute)
+			}
+			floor, err = query.ClockFloor(ctx)
+			if err != nil || !floor.Equal(start) || health.Snapshot().Status != observability.StatusDegraded {
+				t.Fatalf("unsafe time changed history or health did not degrade: %v %v %+v", floor, err, health.Snapshot())
+			}
+
+			// Reacquire a corrected epoch even if it differs from the startup reference.
+			clk.SetWall(start.Add(2 * time.Hour))
+			synced = true
+			if err := sched.RunPersistOnce(ctx); !errors.Is(err, ErrClockUntrusted) {
+				t.Fatalf("expected recovery wait: %v", err)
+			}
+			clk.Advance(clockRecovery)
+			if err := sched.RunPersistOnce(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := sched.RunMaintenanceOnce(ctx); err != nil {
+				t.Fatal(err)
+			}
+			series, err := query.QuerySeries(ctx, history.SeriesQuery{
+				ResourceID: host.HostResourceID, MetricKey: metrics.KeyLoad1m, Step: "30",
+				FromMs: start.Add(-24 * time.Hour).UnixMilli(), ToMs: start.Add(100 * 24 * time.Hour).UnixMilli(),
+			})
+			if err != nil || len(series.Points) != 2 || series.Points[0].Avg != 20 || series.Points[1].Avg != 80 ||
+				health.Snapshot().Status != observability.StatusOK {
+				t.Fatalf("unexpected history after automatic recovery: %+v err=%v health=%+v", series, err, health.Snapshot())
+			}
+		})
+	}
+}
+
+func TestDiscoveryWaitIsCancellableAndCannotOverlap(t *testing.T) {
+	started, release := make(chan struct{}), make(chan struct{})
+	defer close(release)
+	cfg := config.Default()
+	cfg.PersistInterval = 5 * time.Millisecond
+	fastRan := make(chan struct{}, 1)
+	sched := New(Deps{
+		Config: cfg, Clock: metrics.NewFakeClock(time.Now()), BootIDProvider: func() (string, error) {
+			close(started)
+			<-release
+			return "boot", nil
+		},
+		FastCollectors: []metrics.Collector{&stubCollector{name: "fast", fn: func(context.Context) (metrics.RawSnapshot, error) {
+			select {
+			case fastRan <- struct{}{}:
+			default:
+			}
+			return metrics.RawSnapshot{}, nil
+		}}},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- sched.Run(ctx) }()
+	<-started
+	select {
+	case <-fastRan:
+	case <-time.After(time.Second):
+		t.Fatal("blocked discovery also stopped fast collection")
+	}
+	if err := sched.RunDiscoveryOnce(ctx); err == nil {
+		t.Fatal("a second discovery started while the first was blocked")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Run: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("blocked discovery prevented shutdown")
+	}
+}
+
+func TestStartupAndShutdownWithStalledSlowProbes(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cfg := config.Default()
+	cfg.PersistInterval = 5 * time.Millisecond
+	cfg.SlowFSInterval, cfg.SensorInterval = 10*time.Millisecond, 10*time.Millisecond
+	cfg.SlowCollectorTimeout = 25 * time.Millisecond
+	clk := metrics.NewFakeClock(time.Now())
+	root := t.TempDir()
+	cfg.ProcRoot, cfg.EtcRoot = root, root
+	blockedSensor := filepath.Join(root, "blocked_input")
+	goodSensor := filepath.Join(root, "good_input")
+	if err := syscall.Mkfifo(blockedSensor, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(goodSensor, []byte("42000\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sensors := collector.NewSensorCollector(clk, func() []collector.SensorTarget {
+		return []collector.SensorTarget{{ResourceID: "blocked-sensor", InputPath: blockedSensor}, {ResourceID: "good-sensor", InputPath: goodSensor}}
+	})
+	releaseFS := make(chan struct{})
+	defer close(releaseFS)
+	var blockedFS, fast atomic.Int32
+	fs := collector.NewFilesystemCollector(clk, func() []collector.FilesystemTarget {
+		return []collector.FilesystemTarget{{ResourceID: "blocked-fs", Mountpoint: "/blocked"}, {ResourceID: "good-fs", Mountpoint: "/good"}}
+	}, func(path string) (collector.FSStat, error) {
+		if path == "/blocked" {
+			blockedFS.Add(1)
+			<-releaseFS
+		}
+		return collector.FSStat{TotalBytes: 100}, nil
+	})
+	sched := New(Deps{Config: cfg, Clock: clk, FSCollector: fs, SensorCollector: sensors,
+		FastCollectors: []metrics.Collector{&stubCollector{name: "fast", fn: func(context.Context) (metrics.RawSnapshot, error) {
+			fast.Add(1)
+			return metrics.RawSnapshot{}, nil
+		}}},
+	})
+	baseline := runtime.NumGoroutine()
+	done := make(chan error, 1)
+	go func() { done <- sched.Run(ctx) }()
+
+	// A connected writer that sends no bytes leaves the sensor read blocked in the kernel.
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		fd, err := syscall.Open(blockedSensor, syscall.O_WRONLY|syscall.O_NONBLOCK, 0)
+		if err == nil {
+			defer syscall.Close(fd)
+			break
+		}
+		if !errors.Is(err, syscall.ENXIO) || time.Now().After(deadline) {
+			t.Fatalf("sensor never opened the FIFO: %v", err)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	for fast.Load() < 20 || len(sensors.CachedSnapshot().Samples) != 1 || len(fs.CachedSnapshot().Samples) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("healthy probes stalled: fast=%d sensor=%d fs=%d", fast.Load(), len(sensors.CachedSnapshot().Samples), len(fs.CachedSnapshot().Samples))
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if blockedFS.Load() != 1 || runtime.NumGoroutine() > baseline+20 {
+		t.Fatalf("blocked probe was relaunched or goroutines accumulated: calls=%d goroutines=%d baseline=%d", blockedFS.Load(), runtime.NumGoroutine(), baseline)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("shutdown: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("scheduler waited for blocked probes during shutdown")
+	}
+	if blockedFS.Load() != 1 || runtime.NumGoroutine() > baseline+4 {
+		t.Fatalf("shutdown did not release the scheduler loops: calls=%d goroutines=%d baseline=%d", blockedFS.Load(), runtime.NumGoroutine(), baseline)
+	}
 }

@@ -102,18 +102,15 @@ func (r *Registry) EnsureHost(ctx context.Context, inv Inventory, nowMs int64) e
 	return tx.Commit()
 }
 
-// EnsureCPUCores reconciles logical CPU core resources (`cpu:0..count-1`).
-func (r *Registry) EnsureCPUCores(ctx context.Context, count int, nowMs int64) ([]Resource, error) {
-	if count <= 0 {
-		return r.Reconcile(ctx, KindCPUCore, nil, nowMs)
-	}
-	items := make([]DiscoveredResource, 0, count)
-	for i := 0; i < count; i++ {
-		ext := fmt.Sprintf("cpu%d", i)
+// EnsureCPUCores reconciles the logical CPU IDs reported by Linux.
+func (r *Registry) EnsureCPUCores(ctx context.Context, cores []string, nowMs int64) ([]Resource, error) {
+	items := make([]DiscoveredResource, 0, len(cores))
+	for _, core := range cores {
+		ext := "cpu" + core
 		items = append(items, DiscoveredResource{
 			ExternalKey:  ext,
 			DisplayName:  ext,
-			MetadataJSON: fmt.Sprintf(`{"core_index":%d}`, i),
+			MetadataJSON: fmt.Sprintf(`{"core_index":%s}`, core),
 		})
 	}
 	return r.Reconcile(ctx, KindCPUCore, items, nowMs)

@@ -2,12 +2,61 @@ package database
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"vektor/internal/config"
+	"vektor/migrations"
 )
+
+func TestMigrationProtectsPartiallyPrunedV1History(t *testing.T) {
+	ctx := context.Background()
+	cfg := config.Default()
+	cfg.DataDir = t.TempDir()
+	legacy, err := sql.Open("sqlite", buildDSN(cfg.EffectiveDBPath(), false, 100, config.SynchronousNormal))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer legacy.Close()
+	schema, err := migrations.FS.ReadFile("001_initial_schema.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.ExecContext(ctx, string(schema)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.ExecContext(ctx, `
+		INSERT INTO schema_migrations VALUES (1, '001_initial_schema.sql', 0);
+		INSERT INTO resources (id, kind, external_key, display_name, first_seen_ms, last_seen_ms)
+		VALUES ('host:local', 'host', 'local', 'host', 0, 600000);
+		INSERT INTO metric_buckets VALUES
+		  ('host:local','load.1m',30,360000,1,80,80,80,80,360000),
+		  ('host:local','load.1m',300,300000,3,120,20,80,80,360000),
+		  ('host:local','load.1m',3600,0,5,200,20,80,80,360000);
+		INSERT INTO rollup_state VALUES (300, 3600000), (3600, 3600000);
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := Open(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var cutoff int64
+	var count int
+	err = db.Reader().QueryRowContext(ctx, `
+		SELECT (SELECT value FROM system_meta WHERE key = 'raw_pruned_before_ms'),
+		       (SELECT sample_count FROM metric_buckets WHERE resolution_s = 3600)
+	`).Scan(&cutoff, &count)
+	if err != nil || cutoff != 3600000 || count != 5 {
+		t.Fatalf("migration changed existing history or left its incomplete window writable: cutoff=%d count=%d err=%v", cutoff, count, err)
+	}
+}
 
 func TestOpenMigrateConstraintsAndBackup(t *testing.T) {
 	ctx := context.Background()

@@ -21,7 +21,6 @@ func TestRetentionNeverDeletesUnrolledDataAndBatchesSafely(t *testing.T) {
 	cfg.MediumRetention = 7 * 24 * time.Hour
 	cfg.LongRetention = 90 * 24 * time.Hour
 
-	writer := NewRawWriter(db, health, nil, nil)
 	rollup := NewRollupEngine(db, cfg, health, nil)
 	retention := NewRetentionEngine(db, cfg, health, nil)
 	retention.batchSize = 5 // Force multiple batched delete transactions.
@@ -31,6 +30,7 @@ func TestRetentionNeverDeletesUnrolledDataAndBatchesSafely(t *testing.T) {
 
 	// Seed 12 raw buckets older than 24h (at now - 30h), and 3 recent raw buckets (at now - 2h).
 	oldBase := now.Add(-30 * time.Hour).Truncate(time.Hour).UnixMilli()
+	writer := NewRawWriter(db, cfg, health, nil, metrics.NewFakeClock(time.UnixMilli(oldBase)))
 	recentBase := now.Add(-2 * time.Hour).Truncate(time.Hour).UnixMilli()
 
 	var pts []metrics.MetricPoint
@@ -70,7 +70,7 @@ func TestRetentionNeverDeletesUnrolledDataAndBatchesSafely(t *testing.T) {
 
 	// Step 2: Advance 5m watermark only halfway through the old hour (say oldBase + 3*30_000? No, aligned 5m = oldBase + 300_000),
 	// verifying retention clamps raw deletion by closedThrough300 even when rawRetentionMs is older!
-	if err := rollup.setWatermark(ctx, ResolutionMediumS, oldBase+300_000); err != nil {
+	if err := storeWatermark(ctx, db.Writer(), ResolutionMediumS, oldBase+300_000); err != nil {
 		t.Fatalf("setWatermark partial: %v", err)
 	}
 	repPartial, err := retention.Run(ctx, nowMs)

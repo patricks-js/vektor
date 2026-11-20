@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -86,12 +87,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	fsCol := collector.NewFilesystemCollector(clk, topo.Filesystems, nil)
 	sensorCol := collector.NewSensorCollector(clk, topo.Sensors)
 
-	writer := history.NewRawWriter(db, health, logger, clk)
+	writer := history.NewRawWriter(db, cfg, health, logger, clk)
 	rollup := history.NewRollupEngine(db, cfg, health, logger)
 	retention := history.NewRetentionEngine(db, cfg, health, logger)
 	maint := history.NewMaintenanceRunner(db, rollup, retention, logger)
 	hub := scheduler.NewLiveHub(health, nil, nil)
-	qs := history.NewQueryService(db, registry, cfg, health, clk)
+	qs := history.NewQueryService(db, registry, cfg, health)
+	clockFloor, err := qs.ClockFloor(ctx)
+	if err != nil {
+		return fmt.Errorf("read historical clock floor: %w", err)
+	}
 
 	sched := scheduler.New(scheduler.Deps{
 		Config:          cfg,
@@ -107,6 +112,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		RawWriter:       writer,
 		Maintenance:     maint,
 		LiveHub:         hub,
+		ClockFloor:      clockFloor,
 	})
 
 	if checkMode {
@@ -116,12 +122,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			logger.Warn("check cycle reported partial warnings/errors", slog.String("error", err.Error()))
 		}
 		time.Sleep(150 * time.Millisecond)
-		if err := sched.RunPersistOnce(ctx); err != nil {
+		if err := sched.RunPersistOnce(ctx); err != nil && !errors.Is(err, scheduler.ErrClockUntrusted) {
 			return fmt.Errorf("second check persist cycle: %w", err)
 		}
 
 		hostInfo, err := qs.GetHost(ctx)
-		if err != nil {
+		var hostResult *history.HostResponse
+		switch {
+		case err == nil:
+			hostResult = &hostInfo
+		case !errors.Is(err, sql.ErrNoRows):
 			return fmt.Errorf("read host info: %w", err)
 		}
 		resources, err := qs.ListResources(ctx, "", false)
@@ -139,11 +149,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 
 		out := struct {
-			Host           history.HostResponse   `json:"host"`
+			Host           *history.HostResponse  `json:"host"`
 			ResourceCounts map[string]int         `json:"resource_counts"`
 			Health         history.HealthResponse `json:"health"`
 		}{
-			Host:           hostInfo,
+			Host:           hostResult,
 			ResourceCounts: counts,
 			Health:         healthInfo,
 		}

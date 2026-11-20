@@ -24,7 +24,7 @@ func build45BenchSeries(t testing.TB, ctx context.Context, reg *host.Registry) [
 	if err := reg.EnsureHost(ctx, host.Inventory{Hostname: "bench-node", BootID: "bench-boot"}, 1000); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := reg.EnsureCPUCores(ctx, 8, 1000); err != nil {
+	if _, err := reg.EnsureCPUCores(ctx, []string{"0", "1", "2", "3", "4", "5", "6", "7"}, 1000); err != nil {
 		t.Fatal(err)
 	}
 	disks, err := reg.Reconcile(ctx, host.KindDisk, []host.DiscoveredResource{
@@ -117,15 +117,15 @@ func TestBenchmark24hFootprint(t *testing.T) {
 
 	start := time.Date(2026, 11, 19, 0, 0, 0, 0, time.UTC)
 	clk := metrics.NewFakeClock(start)
-	writer := history.NewRawWriter(db, health, nil, clk)
+	writer := history.NewRawWriter(db, cfg, health, nil, clk)
 	rollup := history.NewRollupEngine(db, cfg, health, nil)
-	qs := history.NewQueryService(db, reg, cfg, health, clk)
+	qs := history.NewQueryService(db, reg, cfg, health)
 
 	const totalTicks = 2880 // 24h * 120 ticks/h
 	batch := make([]metrics.MetricPoint, len(series))
 
 	writeStart := time.Now()
-	for tick := 0; tick < totalTicks; tick++ {
+	for tick := range totalTicks {
 		tsMs := start.Add(time.Duration(tick)*30*time.Second + 5*time.Second).UnixMilli()
 		for i, s := range series {
 			batch[i] = metrics.MetricPoint{
@@ -212,14 +212,14 @@ func BenchmarkStorageAndQuery24h(b *testing.B) {
 
 	start := time.Date(2026, 11, 19, 0, 0, 0, 0, time.UTC)
 	clk := metrics.NewFakeClock(start)
-	writer := history.NewRawWriter(db, health, nil, clk)
+	writer := history.NewRawWriter(db, cfg, health, nil, clk)
 	rollup := history.NewRollupEngine(db, cfg, health, nil)
-	qs := history.NewQueryService(db, reg, cfg, health, clk)
+	qs := history.NewQueryService(db, reg, cfg, health)
 
 	// Pre-seed 24h of buckets for steady-state query/write benchmarking.
 	const totalTicks = 2880
 	batch := make([]metrics.MetricPoint, len(series))
-	for tick := 0; tick < totalTicks; tick++ {
+	for tick := range totalTicks {
 		tsMs := start.Add(time.Duration(tick)*30*time.Second + 5*time.Second).UnixMilli()
 		for i, s := range series {
 			batch[i] = metrics.MetricPoint{

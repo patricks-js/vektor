@@ -149,6 +149,16 @@ func (e *RollupEngine) Run(ctx context.Context, nowMs int64) (RollupReport, erro
 	}
 	report.ClosedThroughLongMs = closed1h
 
+	repaired5m, repaired1h, err := e.repairDirty(ctx)
+	if err != nil {
+		if e.health != nil {
+			e.health.RecordDBError(err)
+		}
+		return report, fmt.Errorf("repair historical rollups: %w", err)
+	}
+	report.MediumBucketsUpserted += repaired5m
+	report.LongBucketsUpserted += repaired1h
+
 	lagS := computeRollupLagSeconds(nowMs, e.graceMs, has5m, closed5m)
 	report.LagSeconds = lagS
 	if e.health != nil {
@@ -162,60 +172,30 @@ func (e *RollupEngine) advanceTier(
 	sourceRes, targetRes int,
 	targetMs, eligibleEndMs, chunkMs int64,
 ) (upserted int64, closedThrough int64, hasWatermark bool, err error) {
-	wm, hasWM, err := e.getWatermark(ctx, e.db.Reader(), targetRes)
+	wm, hasWM, minSourceMs, hasSource, err := e.tierStart(ctx, sourceRes, targetRes, targetMs, eligibleEndMs)
 	if err != nil {
 		return 0, 0, false, err
 	}
-
-	minSourceMs, hasSource, err := e.minBucketStart(ctx, e.db.Reader(), sourceRes)
-	if err != nil {
-		return 0, 0, hasWM, err
+	if !hasWM {
+		return 0, 0, false, nil
 	}
 
-	var fromMs int64
-	if hasWM {
-		fromMs = wm
-		if hasSource && minSourceMs-wm > targetMs {
-			e.logger.Warn("unrecoverable source gap ahead of rollup watermark; advancing across missing interval",
-				slog.Int("source_res_s", sourceRes),
-				slog.Int("target_res_s", targetRes),
-				slog.Int64("watermark_ms", wm),
-				slog.Int64("oldest_source_ms", minSourceMs),
-			)
-		}
-	} else {
-		if !hasSource {
-			return 0, 0, false, nil
-		}
-		fromMs = metrics.AlignBucketMs(minSourceMs, targetMs)
+	oldestWindow := wm
+	if hasSource && minSourceMs-wm > targetMs {
+		oldestWindow = metrics.AlignBucketMs(minSourceMs, targetMs)
+		e.logger.Warn("source gap ahead of rollup watermark",
+			slog.Int("source_res_s", sourceRes),
+			slog.Int("target_res_s", targetRes),
+			slog.Int64("watermark_ms", wm),
+			slog.Int64("oldest_source_ms", minSourceMs),
+		)
 	}
 
-	if fromMs >= eligibleEndMs {
-		return 0, wm, hasWM, nil
-	}
-
-	if hasSource {
-		alignedMin := metrics.AlignBucketMs(minSourceMs, targetMs)
-		if alignedMin > fromMs && alignedMin <= eligibleEndMs {
-			// Skip pure empty historical wasteland before oldest surviving source bucket in one metadata step,
-			// while still running normal chunked aggregation from alignedMin onwards.
-			if err := e.setWatermark(ctx, targetRes, alignedMin); err != nil {
-				return 0, wm, hasWM, err
-			}
-			fromMs = alignedMin
-			wm = alignedMin
-			hasWM = true
-		}
-	}
-
-	for cursor := fromMs; cursor < eligibleEndMs; {
+	for cursor := wm; cursor < eligibleEndMs; {
 		if err := ctx.Err(); err != nil {
 			return upserted, wm, hasWM, err
 		}
-		chunkEnd := cursor + chunkMs
-		if chunkEnd > eligibleEndMs {
-			chunkEnd = eligibleEndMs
-		}
+		chunkEnd := min(eligibleEndMs, max(cursor+chunkMs, oldestWindow))
 		rows, err := e.rollupChunkTx(ctx, sourceRes, targetRes, targetMs, cursor, chunkEnd, true)
 		if err != nil {
 			return upserted, wm, hasWM, err
@@ -227,6 +207,88 @@ func (e *RollupEngine) advanceTier(
 	}
 
 	return upserted, wm, hasWM, nil
+}
+
+func (e *RollupEngine) tierStart(ctx context.Context, sourceRes, targetRes int, targetMs, eligibleEndMs int64) (int64, bool, int64, bool, error) {
+	tx, err := e.db.Writer().BeginTx(ctx, nil)
+	if err != nil {
+		return 0, false, 0, false, err
+	}
+	defer tx.Rollback()
+	wm, hasWM, err := e.getWatermark(ctx, tx, targetRes)
+	if err != nil {
+		return 0, false, 0, false, err
+	}
+	oldest, hasSource, err := e.minBucketStart(ctx, tx, sourceRes)
+	if err != nil || hasWM || !hasSource {
+		return wm, hasWM, oldest, hasSource, err
+	}
+	start := metrics.AlignBucketMs(oldest, targetMs)
+	if start >= eligibleEndMs {
+		return 0, false, oldest, true, nil
+	}
+	// Record the empty prefix atomically so later inserts into it queue a repair.
+	if err := storeWatermark(ctx, tx, targetRes, start); err != nil {
+		return 0, false, 0, false, err
+	}
+	return start, true, oldest, true, tx.Commit()
+}
+
+func (e *RollupEngine) repairDirty(ctx context.Context) (int64, int64, error) {
+	tx, err := e.db.Writer().BeginTx(ctx, nil)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.QueryContext(ctx, "SELECT bucket_start_ms FROM rollup_dirty ORDER BY bucket_start_ms")
+	if err != nil {
+		return 0, 0, err
+	}
+	var windows []int64
+	for rows.Next() {
+		var start int64
+		if err := rows.Scan(&start); err != nil {
+			rows.Close()
+			return 0, 0, err
+		}
+		windows = append(windows, start)
+	}
+	if err := rows.Close(); err != nil {
+		return 0, 0, err
+	}
+	if err := rows.Err(); err != nil || len(windows) == 0 {
+		return 0, 0, err
+	}
+
+	closedLong, hasLong, err := e.getWatermark(ctx, tx, ResolutionLongS)
+	if err != nil {
+		return 0, 0, err
+	}
+	var medium, long int64
+	var hours []int64
+	for _, start := range windows {
+		n, err := aggregateRange(ctx, tx, ResolutionRawS, ResolutionMediumS, ResolutionMediumMs, start, start+ResolutionMediumMs)
+		if err != nil {
+			return 0, 0, err
+		}
+		medium += n
+		hour := metrics.AlignBucketMs(start, ResolutionLongMs)
+		if hasLong && hour < closedLong && (len(hours) == 0 || hours[len(hours)-1] != hour) {
+			hours = append(hours, hour)
+		}
+	}
+	for _, start := range hours {
+		n, err := aggregateRange(ctx, tx, ResolutionMediumS, ResolutionLongS, ResolutionLongMs, start, start+ResolutionLongMs)
+		if err != nil {
+			return 0, 0, err
+		}
+		long += n
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM rollup_dirty"); err != nil {
+		return 0, 0, err
+	}
+	return medium, long, tx.Commit()
 }
 
 // RecomputeRange deterministically recomputes targetRes buckets from sourceRes within [fromMs, toMs)
@@ -259,19 +321,12 @@ func (e *RollupEngine) rollupChunkTx(
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	res, err := tx.ExecContext(ctx, rollupRangeSQL, targetMs, sourceRes, fromMs, toMs, targetRes)
+	affected, err := aggregateRange(ctx, tx, sourceRes, targetRes, targetMs, fromMs, toMs)
 	if err != nil {
 		return 0, err
 	}
-	affected, _ := res.RowsAffected()
-
 	if advanceWatermark {
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO rollup_state(resolution_s, closed_through_ms)
-			VALUES (?, ?)
-			ON CONFLICT(resolution_s) DO UPDATE SET
-				closed_through_ms = MAX(rollup_state.closed_through_ms, excluded.closed_through_ms)
-		`, targetRes, toMs); err != nil {
+		if err := storeWatermark(ctx, tx, targetRes, toMs); err != nil {
 			return 0, err
 		}
 	}
@@ -282,8 +337,18 @@ func (e *RollupEngine) rollupChunkTx(
 	return affected, nil
 }
 
-func (e *RollupEngine) setWatermark(ctx context.Context, targetRes int, closedThroughMs int64) error {
-	_, err := e.db.Writer().ExecContext(ctx, `
+func aggregateRange(ctx context.Context, tx *sql.Tx, sourceRes, targetRes int, targetMs, fromMs, toMs int64) (int64, error) {
+	res, err := tx.ExecContext(ctx, rollupRangeSQL, targetMs, sourceRes, fromMs, toMs, targetRes)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+func storeWatermark(ctx context.Context, exec interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}, targetRes int, closedThroughMs int64) error {
+	_, err := exec.ExecContext(ctx, `
 		INSERT INTO rollup_state(resolution_s, closed_through_ms)
 		VALUES (?, ?)
 		ON CONFLICT(resolution_s) DO UPDATE SET

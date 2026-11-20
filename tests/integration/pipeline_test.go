@@ -59,7 +59,7 @@ model name	: AMD EPYC 4244P
 physical id	: 0
 core id		: 0
 
-processor	: 1
+processor	: 2
 model name	: AMD EPYC 4244P
 physical id	: 0
 core id		: 1
@@ -133,7 +133,7 @@ func updateDynamicProc(t *testing.T, proc string, tick int) {
 		idleTotal = 120*75 + uint64(tick-120)*50
 	}
 	writeFile(t, proc, "stat", fmt.Sprintf(
-		"cpu  %d 0 0 %d 0 0 0 0 0 0\ncpu0 %d 0 0 %d 0 0 0 0 0 0\ncpu1 %d 0 0 %d 0 0 0 0 0 0\n",
+		"cpu  %d 0 0 %d 0 0 0 0 0 0\ncpu0 %d 0 0 %d 0 0 0 0 0 0\ncpu2 %d 0 0 %d 0 0 0 0 0 0\n",
 		busyTotal, idleTotal, busyTotal/2, idleTotal/2, busyTotal/2, idleTotal/2,
 	))
 
@@ -186,12 +186,12 @@ func buildEngine(
 		}, nil
 	})
 	senCol := collector.NewSensorCollector(clk, topo.Sensors)
-	writer := history.NewRawWriter(db, health, nil, clk)
+	writer := history.NewRawWriter(db, cfg, health, nil, clk)
 	rollup := history.NewRollupEngine(db, cfg, health, nil)
 	retention := history.NewRetentionEngine(db, cfg, health, nil)
 	maint := history.NewMaintenanceRunner(db, rollup, retention, nil)
 	hub := scheduler.NewLiveHub(health, nil, nil)
-	qs := history.NewQueryService(db, reg, cfg, health, clk)
+	qs := history.NewQueryService(db, reg, cfg, health)
 
 	sched := scheduler.New(scheduler.Deps{
 		Config:          cfg,
@@ -265,6 +265,13 @@ func TestEndToEndPipelineRollupQueryBackupAndReboot(t *testing.T) {
 	}
 	if math.Abs(series30.Points[0].Avg-25.0) > 1e-6 {
 		t.Fatalf("expected 25.0%% CPU busy in hour 10, got %v", series30.Points[0].Avg)
+	}
+	core, err := qs1.QuerySeries(ctx, history.SeriesQuery{
+		ResourceID: "cpu:2", MetricKey: metrics.KeyCPUCoreBusyPct, Step: "30s",
+		FromMs: hour0, ToMs: hour0 + 3600_000,
+	})
+	if err != nil || len(core.Points) != 119 {
+		t.Fatalf("expected persisted points for sparse CPU ID 2: points=%d error=%v", len(core.Points), err)
 	}
 
 	series1h, err := qs1.QuerySeries(ctx, history.SeriesQuery{

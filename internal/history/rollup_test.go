@@ -59,7 +59,7 @@ func TestRollupWeightedMathGapsPartialWindowsAndReplay(t *testing.T) {
 	baseMs := hourStart.UnixMilli()
 
 	clk := metrics.NewFakeClock(hourStart)
-	writer := NewRawWriter(db, health, nil, clk)
+	writer := NewRawWriter(db, cfg, health, nil, clk)
 	rollup := NewRollupEngine(db, cfg, health, nil)
 
 	// Window 1 [10:00, 10:05): 10 raw samples at 20.0.
@@ -140,6 +140,58 @@ func TestRollupWeightedMathGapsPartialWindowsAndReplay(t *testing.T) {
 	}
 }
 
+func TestLateRawRepairsClosedRollupsBeforeRetention(t *testing.T) {
+	ctx := context.Background()
+	db, _ := openTestDB(t)
+	cfg := config.Default()
+	start := time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC)
+	clk := metrics.NewFakeClock(start)
+	writer := NewRawWriter(db, cfg, nil, nil, clk)
+	rollup := NewRollupEngine(db, cfg, nil, nil)
+	retention := NewRetentionEngine(db, cfg, nil, nil)
+	maintenance := NewMaintenanceRunner(db, rollup, retention, nil)
+
+	point := metrics.MetricPoint{
+		ResourceID: host.HostResourceID, Key: metrics.KeyLoad1m,
+		TimestampMs: start.Add(5 * time.Second).UnixMilli(), Value: 20, Valid: true,
+	}
+	write := func(wantWritten, wantExpired int) {
+		t.Helper()
+		written, err := writer.WriteBatch(ctx, []metrics.MetricPoint{point})
+		if err != nil || written.Written != wantWritten || written.SkippedExpired != wantExpired {
+			t.Fatalf("WriteBatch: %+v, %v", written, err)
+		}
+	}
+	write(1, 0)
+	clk.Advance(time.Hour + time.Minute)
+	if _, _, err := maintenance.RunCycle(ctx, clk.Now().UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	point.TimestampMs += ResolutionRawMs
+	point.Value = 80
+	write(1, 0)
+	write(0, 0)
+
+	clk.Advance(24 * time.Hour)
+	if rep, err := retention.Run(ctx, clk.Now().UnixMilli()); err != nil || rep.DeletedRaw != 0 {
+		t.Fatalf("retention removed pending source: %+v %v", rep, err)
+	}
+	if _, _, err := maintenance.RunCycle(ctx, clk.Now().UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	for _, tier := range []int{ResolutionMediumS, ResolutionLongS} {
+		rows := queryBucketsByRes(t, ctx, db, tier)
+		if len(rows) != 1 || rows[0].sampleCount != 2 || rows[0].valueSum != 100 || rows[0].valueLast != 80 {
+			t.Fatalf("tier %ds: %+v", tier, rows)
+		}
+	}
+	clk.SetWall(start)
+	write(0, 1)
+	if rows := queryBucketsByRes(t, ctx, db, ResolutionRawS); len(rows) != 0 {
+		t.Fatalf("expired raw was reinserted: %+v", rows)
+	}
+}
+
 func TestRollupRollbackCatchUpAndMultiDayChunking(t *testing.T) {
 	ctx := context.Background()
 	db, _ := openTestDB(t)
@@ -147,7 +199,7 @@ func TestRollupRollbackCatchUpAndMultiDayChunking(t *testing.T) {
 	rollup := NewRollupEngine(db, cfg, nil, nil)
 
 	start := time.Date(2026, 11, 18, 0, 0, 0, 0, time.UTC).UnixMilli()
-	writer := NewRawWriter(db, nil, nil, nil)
+	writer := NewRawWriter(db, cfg, nil, nil, metrics.NewFakeClock(time.UnixMilli(start)))
 	if _, err := writer.WriteBatch(ctx, []metrics.MetricPoint{
 		{ResourceID: host.HostResourceID, Key: metrics.KeyCPUBusyPct, TimestampMs: start + 10_000, Value: 15.0, Valid: true},
 		{ResourceID: host.HostResourceID, Key: metrics.KeyCPUBusyPct, TimestampMs: start + 36*3600_000 + 10_000, Value: 45.0, Valid: true},

@@ -8,6 +8,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"time"
 
 	"vektor/internal/config"
 	"vektor/internal/database"
@@ -72,12 +73,10 @@ type HealthResponse struct {
 
 // QueryService serves read-only host, resource, metric series, and health queries.
 type QueryService struct {
-	db             *database.DB
-	registry       *host.Registry
-	health         *observability.HealthTracker
-	clock          metrics.Clock
-	persistStepS   int64
-	rawRetentionMs int64
+	db       *database.DB
+	registry *host.Registry
+	health   *observability.HealthTracker
+	config   config.Config
 }
 
 // NewQueryService constructs a QueryService using the read-only SQLite pool.
@@ -86,22 +85,9 @@ func NewQueryService(
 	reg *host.Registry,
 	cfg config.Config,
 	health *observability.HealthTracker,
-	clock metrics.Clock,
 ) *QueryService {
-	if clock == nil {
-		clock = metrics.NewRealClock()
-	}
-	persistS := int64(cfg.PersistInterval.Seconds())
-	if persistS <= 0 {
-		persistS = ResolutionRawS
-	}
 	return &QueryService{
-		db:             db,
-		registry:       reg,
-		health:         health,
-		clock:          clock,
-		persistStepS:   persistS,
-		rawRetentionMs: cfg.RawRetention.Milliseconds(),
+		db: db, registry: reg, health: health, config: cfg,
 	}
 }
 
@@ -120,6 +106,22 @@ func (s *QueryService) GetHost(ctx context.Context) (HostResponse, error) {
 // ListResources lists active (or all) tracked resources optionally filtered by kind.
 func (s *QueryService) ListResources(ctx context.Context, kind string, includeInactive bool) ([]host.Resource, error) {
 	return s.registry.List(ctx, kind, includeInactive)
+}
+
+// ClockFloor returns the most recent durable timestamp set by the historical pipeline.
+func (s *QueryService) ClockFloor(ctx context.Context) (time.Time, error) {
+	var floor sql.NullInt64
+	err := s.db.Reader().QueryRowContext(ctx, `
+		SELECT MAX(ts) FROM (
+			SELECT MAX(last_sample_ms) AS ts FROM metric_buckets WHERE resolution_s = 30
+			  AND bucket_start_ms = (SELECT MAX(bucket_start_ms) FROM metric_buckets WHERE resolution_s = 30)
+			UNION ALL SELECT MAX(closed_through_ms) FROM rollup_state
+		)
+	`).Scan(&floor)
+	if err != nil || !floor.Valid {
+		return time.Time{}, err
+	}
+	return time.UnixMilli(floor.Int64), nil
 }
 
 // QuerySeries returns historical metric buckets without interpolating or zero-filling gaps.
@@ -143,7 +145,13 @@ func (s *QueryService) QuerySeries(ctx context.Context, q SeriesQuery) (SeriesRe
 		maxPoints = hardMaxQueryPoints
 	}
 
-	resS, err := s.resolveStep(ctx, q, maxPoints)
+	tx, err := s.db.Reader().BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return SeriesResult{}, err
+	}
+	defer tx.Rollback()
+
+	resS, err := resolveStep(ctx, tx, q, maxPoints)
 	if err != nil {
 		return SeriesResult{}, err
 	}
@@ -151,7 +159,7 @@ func (s *QueryService) QuerySeries(ctx context.Context, q SeriesQuery) (SeriesRe
 	resMs := int64(resS) * 1000
 	alignedFrom := metrics.AlignBucketMs(q.FromMs, resMs)
 
-	rows, err := s.db.Reader().QueryContext(ctx, `
+	rows, err := tx.QueryContext(ctx, `
 		SELECT bucket_start_ms, sample_count, value_sum, value_min, value_max, value_last
 		FROM metric_buckets
 		WHERE resource_id = ?
@@ -160,16 +168,21 @@ func (s *QueryService) QuerySeries(ctx context.Context, q SeriesQuery) (SeriesRe
 		  AND bucket_start_ms >= ?
 		  AND bucket_start_ms < ?
 		ORDER BY bucket_start_ms ASC
-	`, q.ResourceID, q.MetricKey, resS, alignedFrom, q.ToMs)
+	LIMIT ?
+	`, q.ResourceID, q.MetricKey, resS, alignedFrom, q.ToMs, maxPoints+1)
 	if err != nil {
 		return SeriesResult{}, fmt.Errorf("query metric_buckets: %w", err)
 	}
 	defer rows.Close()
 
-	expected := int64(resS) / s.persistStepS
-	if expected < 1 {
-		expected = 1
+	cadence := max(s.config.PersistInterval, time.Duration(ResolutionRawS)*time.Second)
+	switch def.ResourceKinds[0] {
+	case host.KindFilesystem:
+		cadence = max(cadence, s.config.SlowFSInterval)
+	case host.KindSensor:
+		cadence = max(cadence, s.config.SensorInterval)
 	}
+	expected := max(1, int64(time.Duration(resS)*time.Second/cadence))
 
 	points := make([]SeriesPoint, 0)
 	for rows.Next() {
@@ -180,6 +193,9 @@ func (s *QueryService) QuerySeries(ctx context.Context, q SeriesQuery) (SeriesRe
 		}
 		if count <= 0 {
 			continue
+		}
+		if len(points) == maxPoints {
+			return SeriesResult{}, fmt.Errorf("query exceeds %d points at %ds resolution; shorten the range or choose a coarser step", maxPoints, resS)
 		}
 		cov := math.Min(1.0, float64(count)/float64(expected))
 		points = append(points, SeriesPoint{
@@ -208,11 +224,11 @@ func (s *QueryService) QuerySeries(ctx context.Context, q SeriesQuery) (SeriesRe
 	}, nil
 }
 
-func (s *QueryService) resolveStep(ctx context.Context, q SeriesQuery, maxPoints int) (int, error) {
+func resolveStep(ctx context.Context, tx *sql.Tx, q SeriesQuery, maxPoints int) (int, error) {
 	step := strings.ToLower(strings.TrimSpace(q.Step))
 	switch step {
 	case "", "auto":
-		return s.autoSelectResolution(ctx, q, maxPoints)
+		return autoSelectResolution(ctx, tx, q, maxPoints)
 	case "30", "30s":
 		return ResolutionRawS, nil
 	case "300", "300s", "5m":
@@ -229,84 +245,41 @@ func (s *QueryService) resolveStep(ctx context.Context, q SeriesQuery, maxPoints
 	}
 }
 
-func (s *QueryService) autoSelectResolution(ctx context.Context, q SeriesQuery, maxPoints int) (int, error) {
-	tiers := []int{ResolutionRawS, ResolutionMediumS, ResolutionLongS}
-
-	type tierInfo struct {
-		resS    int
-		hasMin  bool
-		minMs   int64
-		fitsMax bool
-	}
-
-	nowMs := s.clock.Now().UnixMilli()
-	rawHorizonMs := nowMs - s.rawRetentionMs
-	spanMs := q.ToMs - q.FromMs
-
-	infos := make([]tierInfo, len(tiers))
-	for i, resS := range tiers {
+func autoSelectResolution(ctx context.Context, tx *sql.Tx, q SeriesQuery, maxPoints int) (int, error) {
+	var chosen int
+	var firstChosen int64
+	var hasData bool
+	for _, resS := range []int{ResolutionRawS, ResolutionMediumS, ResolutionLongS} {
 		resMs := int64(resS) * 1000
-		estBuckets := spanMs/resMs + 1
-		fits := estBuckets <= int64(maxPoints)
-
-		minMs, hasMin, err := s.earliestBucket(ctx, q.ResourceID, q.MetricKey, resS)
+		var count int
+		var first, firstLastSample sql.NullInt64
+		err := tx.QueryRowContext(ctx, `
+			SELECT COUNT(*), MIN(bucket_start_ms), MIN(last_sample_ms)
+			FROM (
+			  SELECT bucket_start_ms, last_sample_ms FROM metric_buckets
+			  WHERE resource_id = ? AND metric_key = ? AND resolution_s = ?
+			    AND bucket_start_ms >= ? AND bucket_start_ms < ?
+			  ORDER BY bucket_start_ms LIMIT ?
+			)
+		`, q.ResourceID, q.MetricKey, resS, metrics.AlignBucketMs(q.FromMs, resMs), q.ToMs, maxPoints+1).Scan(&count, &first, &firstLastSample)
 		if err != nil {
 			return 0, err
 		}
-		infos[i] = tierInfo{
-			resS:    resS,
-			hasMin:  hasMin,
-			minMs:   minMs,
-			fitsMax: fits,
-		}
-	}
-
-	// Never pretend 30s resolution covers a query starting prior to raw retention when a coarser tier fits
-	// and holds data for the earlier portion of the window.
-	for i, info := range infos {
-		if !info.fitsMax {
+		hasData = hasData || count > 0
+		if count == 0 || count > maxPoints {
 			continue
 		}
-		if info.resS == ResolutionRawS && s.rawRetentionMs > 0 && q.FromMs < rawHorizonMs {
-			if infos[1].hasMin || infos[2].hasMin {
-				continue
-			}
+		if chosen == 0 || (firstLastSample.Int64 >= q.FromMs && firstLastSample.Int64 < firstChosen) {
+			chosen, firstChosen = resS, first.Int64
 		}
-		// If a coarser tier has earlier data than this finer tier (meaning finer data expired/rolled off),
-		// fall back to the coarser tier rather than hiding historical coverage.
-		finerCoveredFrom := !info.hasMin || info.minMs <= q.FromMs+int64(info.resS)*1000
-		if !finerCoveredFrom {
-			coarserHasEarlier := false
-			for j := i + 1; j < len(infos); j++ {
-				if infos[j].hasMin && (!info.hasMin || infos[j].minMs < info.minMs) {
-					coarserHasEarlier = true
-					break
-				}
-			}
-			if coarserHasEarlier {
-				continue
-			}
-		}
-		return info.resS, nil
 	}
-
-	return ResolutionLongS, nil
-}
-
-func (s *QueryService) earliestBucket(ctx context.Context, resID, metricKey string, resS int) (int64, bool, error) {
-	var minMs sql.NullInt64
-	err := s.db.Reader().QueryRowContext(ctx, `
-		SELECT MIN(bucket_start_ms)
-		FROM metric_buckets
-		WHERE resource_id = ? AND metric_key = ? AND resolution_s = ?
-	`, resID, metricKey, resS).Scan(&minMs)
-	if err != nil {
-		return 0, false, err
+	if chosen != 0 {
+		return chosen, nil
 	}
-	if !minMs.Valid {
-		return 0, false, nil
+	if !hasData {
+		return ResolutionRawS, nil
 	}
-	return minMs.Int64, true, nil
+	return 0, fmt.Errorf("no populated resolution fits %d points; shorten the range", maxPoints)
 }
 
 // GetHealth checks live DB connectivity, reads file sizes, and merges HealthTracker counters.

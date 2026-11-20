@@ -101,18 +101,13 @@ func (c *FilesystemCollector) Collect(ctx context.Context) (metrics.RawSnapshot,
 		return snap, nil
 	}
 
-	type result struct {
-		target FilesystemTarget
-		stat   FSStat
-		ts     time.Time
-		mono   time.Duration
-		err    error
-	}
-
-	resCh := make(chan result, len(targets))
+	resCh := make(chan error, len(targets))
 	launched := 0
 
 	for _, tg := range targets {
+		if ctx.Err() != nil {
+			break
+		}
 		c.inFlightMu.Lock()
 		busy := c.inFlight[tg.Mountpoint]
 		if !busy {
@@ -141,37 +136,34 @@ func (c *FilesystemCollector) Collect(ctx context.Context) (metrics.RawSnapshot,
 				c.clearInFlight(target.Mountpoint)
 			}()
 			st, err := c.statfs(target.Mountpoint)
-			resCh <- result{
-				target: target,
-				stat:   st,
-				ts:     c.clock.Now(),
-				mono:   c.clock.Monotonic(),
-				err:    err,
+			if err != nil {
+				resCh <- fmt.Errorf("statfs %s: %w", target.Mountpoint, err)
+				return
 			}
+			if ctx.Err() == nil {
+				c.cacheMu.Lock()
+				c.cache[target.ResourceID] = cachedFSReading{
+					ResourceID: target.ResourceID,
+					ObservedAt: c.clock.Now(),
+					Mono:       c.clock.Monotonic(),
+					Mountpoint: target.Mountpoint,
+					Stat:       st,
+				}
+				c.cacheMu.Unlock()
+			}
+			resCh <- nil
 		}(tg)
 	}
 
-	collected := 0
 waitLoop:
-	for collected < launched {
+	for range launched {
 		select {
-		case r := <-resCh:
-			collected++
-			if r.err != nil {
-				snap.Warnings = append(snap.Warnings, fmt.Errorf("statfs %s: %w", r.target.Mountpoint, r.err))
-				continue
+		case err := <-resCh:
+			if err != nil {
+				snap.Warnings = append(snap.Warnings, err)
 			}
-			c.cacheMu.Lock()
-			c.cache[r.target.ResourceID] = cachedFSReading{
-				ResourceID: r.target.ResourceID,
-				Mountpoint: r.target.Mountpoint,
-				ObservedAt: r.ts,
-				Mono:       r.mono,
-				Stat:       r.stat,
-			}
-			c.cacheMu.Unlock()
 		case <-ctx.Done():
-			snap.Warnings = append(snap.Warnings, fmt.Errorf("filesystem collect timed out waiting for %d probe(s): %w", launched-collected, ctx.Err()))
+			snap.Warnings = append(snap.Warnings, fmt.Errorf("filesystem collect stopped waiting: %w", ctx.Err()))
 			break waitLoop
 		}
 	}

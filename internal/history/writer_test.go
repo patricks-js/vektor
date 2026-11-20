@@ -41,11 +41,12 @@ func TestRawWriterIdempotentRetryAndOrdering(t *testing.T) {
 	db, _ := openTestDB(t)
 	health := observability.NewHealthTracker()
 	clk := metrics.NewFakeClock(time.Date(2026, 11, 20, 10, 0, 10, 0, time.UTC))
-	w := NewRawWriter(db, health, nil, clk)
+	w := NewRawWriter(db, config.Default(), health, nil, clk)
 
 	ts1 := clk.Now().UnixMilli()
 	batch := []metrics.MetricPoint{
 		{ResourceID: host.HostResourceID, Key: metrics.KeyCPUBusyPct, TimestampMs: ts1, Value: 42.0, Valid: true},
+		{ResourceID: "cpu:99", Key: metrics.KeyCPUCoreBusyPct, TimestampMs: ts1, Value: 20, Valid: true},
 		{ResourceID: host.HostResourceID, Key: metrics.KeyLoad1m, TimestampMs: ts1, Value: math.NaN(), Valid: true},
 		{ResourceID: host.HostResourceID, Key: "unknown.key", TimestampMs: ts1, Value: 1.0, Valid: true},
 		{ResourceID: host.HostResourceID, Key: metrics.KeyLoad5m, TimestampMs: ts1, Value: 0.5, Valid: false},
@@ -55,7 +56,7 @@ func TestRawWriterIdempotentRetryAndOrdering(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WriteBatch 1: %v", err)
 	}
-	if res1.Written != 1 || res1.SkippedInvalid != 2 || res1.SkippedUnknown != 1 {
+	if res1.Written != 1 || res1.SkippedInvalid != 2 || res1.SkippedUnknown != 1 || res1.SkippedUnregistered != 1 {
 		t.Fatalf("unexpected write result: %+v", res1)
 	}
 
@@ -112,7 +113,7 @@ func TestRawWriterTransientSQLiteBusyRetryAndDegradedHealthOnFailure(t *testing.
 	})
 	health := observability.NewHealthTracker()
 	clk := metrics.NewFakeClock(time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC))
-	w := NewRawWriter(db, health, nil, clk)
+	w := NewRawWriter(db, config.Default(), health, nil, clk)
 
 	// Hold an external immediate write transaction briefly so first WriteBatch attempt hits SQLITE_BUSY
 	// and succeeds on retry once lock is released.
@@ -146,12 +147,15 @@ func TestRawWriterTransientSQLiteBusyRetryAndDegradedHealthOnFailure(t *testing.
 		t.Fatalf("expected healthy status after retry recovery, got %+v", snap)
 	}
 
-	// Simulate fatal write failure (foreign key error or closed DB) -> health becomes degraded without panic.
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// A fatal database error degrades health.
 	_, err = w.WriteBatch(ctx, []metrics.MetricPoint{
-		{ResourceID: "missing:fk", Key: metrics.KeyCPUBusyPct, TimestampMs: clk.Now().UnixMilli(), Value: 55.0, Valid: true},
+		{ResourceID: host.HostResourceID, Key: metrics.KeyCPUBusyPct, TimestampMs: clk.Now().UnixMilli(), Value: 55.0, Valid: true},
 	})
 	if err == nil {
-		t.Fatal("expected error for missing FK")
+		t.Fatal("expected error for closed database")
 	}
 	snap := health.Snapshot()
 	if snap.Status != observability.StatusDegraded || snap.DBOK || snap.LastDBError == "" {

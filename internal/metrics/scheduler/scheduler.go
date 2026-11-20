@@ -3,8 +3,11 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"vektor/internal/config"
@@ -16,22 +19,31 @@ import (
 	"vektor/internal/observability"
 )
 
+const (
+	maxWallClockSkew = 5 * time.Second
+	clockRecovery    = 30 * time.Second
+)
+
+var ErrClockUntrusted = errors.New("wall clock untrusted")
+
 // Deps bundles collaborators required by Scheduler.
 type Deps struct {
-	Config          config.Config
-	Clock           metrics.Clock
-	Logger          *slog.Logger
-	Health          *observability.HealthTracker
-	Registry        *host.Registry
-	Discovery       *collector.Discovery
-	Normalizer      *tracker.Normalizer
-	FastCollectors  []metrics.Collector
-	FSCollector     *collector.FilesystemCollector
-	SensorCollector *collector.SensorCollector
-	RawWriter       *history.RawWriter
-	Maintenance     *history.MaintenanceRunner
-	LiveHub         *LiveHub
-	BootIDProvider  func() (string, error)
+	Config            config.Config
+	Clock             metrics.Clock
+	Logger            *slog.Logger
+	Health            *observability.HealthTracker
+	Registry          *host.Registry
+	Discovery         *collector.Discovery
+	Normalizer        *tracker.Normalizer
+	FastCollectors    []metrics.Collector
+	FSCollector       *collector.FilesystemCollector
+	SensorCollector   *collector.SensorCollector
+	RawWriter         *history.RawWriter
+	Maintenance       *history.MaintenanceRunner
+	LiveHub           *LiveHub
+	BootIDProvider    func() (string, error)
+	ClockSynchronized func() bool
+	ClockFloor        time.Time
 }
 
 // Scheduler coordinates discovery, fast/slow collection, rate normalization, persistence,
@@ -40,7 +52,18 @@ type Scheduler struct {
 	deps       Deps
 	fastSem    chan struct{}
 	inFlightMu sync.Mutex
-	inFlight   map[string]bool
+	inFlight   map[string]*fastFlight
+
+	discoveryMu      sync.Mutex
+	clockMu          sync.Mutex
+	clockWall        time.Time
+	clockMono        time.Duration
+	clockElapsed     func() time.Duration
+	clockFloor       time.Time
+	clockError       string
+	clockStableSince time.Time
+	clockStableMono  time.Duration
+	bootID           atomic.Pointer[string]
 
 	liveNotifyCh chan struct{}
 }
@@ -53,20 +76,32 @@ func New(deps Deps) *Scheduler {
 	if deps.Logger == nil {
 		deps.Logger = observability.NewLogger(nil, slog.LevelInfo)
 	}
-	if deps.BootIDProvider == nil {
-		deps.BootIDProvider = func() (string, error) {
-			return collector.ReadBootID(deps.Config.ProcRoot)
-		}
-	}
 	maxConc := deps.Config.MaxFastConcurrency
 	if maxConc <= 0 {
 		maxConc = 4
 	}
+	elapsed := deps.Clock.Monotonic
+	if clock, ok := deps.Clock.(*metrics.RealClock); ok {
+		elapsed = clock.Elapsed
+		if deps.ClockSynchronized == nil {
+			deps.ClockSynchronized = clock.Synchronized
+		}
+	}
+	if deps.ClockSynchronized == nil {
+		deps.ClockSynchronized = func() bool { return true }
+	}
 	s := &Scheduler{
 		deps:         deps,
 		fastSem:      make(chan struct{}, maxConc),
-		inFlight:     make(map[string]bool),
+		inFlight:     make(map[string]*fastFlight),
 		liveNotifyCh: make(chan struct{}, 1),
+		clockWall:    deps.Clock.Now(),
+		clockMono:    elapsed(),
+		clockElapsed: elapsed,
+		clockFloor:   deps.ClockFloor,
+	}
+	if deps.Discovery != nil && deps.Normalizer != nil {
+		deps.Normalizer.SetNICIncludeFunc(deps.Discovery.Topology().IncludeNICInHostAggregate)
 	}
 	if deps.LiveHub != nil {
 		deps.LiveHub.SetHooks(s.signalLiveChange, s.signalLiveChange)
@@ -83,10 +118,7 @@ func (s *Scheduler) signalLiveChange() {
 
 // Run executes initial discovery and then runs all scheduling loops until ctx is cancelled.
 func (s *Scheduler) Run(ctx context.Context) error {
-	if err := s.RunDiscoveryOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
-		s.deps.Logger.Warn("initial discovery completed with errors", slog.String("error", err.Error()))
-	}
-
+	initialDiscoveryDone := make(chan struct{})
 	var wg sync.WaitGroup
 	wg.Add(6)
 
@@ -96,11 +128,20 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	}()
 	go func() {
 		defer wg.Done()
+		if err := s.RunDiscoveryOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			s.deps.Logger.Warn("initial discovery completed with errors", slog.String("error", err.Error()))
+		}
+		close(initialDiscoveryDone)
 		s.runTickerLoop(ctx, s.deps.Config.DiscoveryInterval, s.RunDiscoveryOnce)
 	}()
 	go func() {
 		defer wg.Done()
 		if s.deps.FSCollector == nil {
+			return
+		}
+		select {
+		case <-initialDiscoveryDone:
+		case <-ctx.Done():
 			return
 		}
 		_ = s.RunSlowFSOnce(ctx)
@@ -109,6 +150,11 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	go func() {
 		defer wg.Done()
 		if s.deps.SensorCollector == nil || !s.deps.Config.IncludeSensors {
+			return
+		}
+		select {
+		case <-initialDiscoveryDone:
+		case <-ctx.Done():
 			return
 		}
 		_ = s.RunSensorsOnce(ctx)
@@ -218,24 +264,57 @@ func (s *Scheduler) runLiveLoop(ctx context.Context) {
 
 // RunDiscoveryOnce collects static inventory and reconciles discovered resources into Registry and Topology.
 func (s *Scheduler) RunDiscoveryOnce(ctx context.Context) error {
-	now := s.deps.Clock.Now()
-	inv := host.CollectInventory(s.deps.Config.ProcRoot, s.deps.Config.EtcRoot, now)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !s.discoveryMu.TryLock() {
+		return errors.New("previous discovery is still in flight")
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, s.collectorTimeout())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		err := s.discover(probeCtx)
+		s.discoveryMu.Unlock()
+		done <- err
+	}()
+	var err error
+	select {
+	case err = <-done:
+	case <-probeCtx.Done():
+		err = probeCtx.Err()
+	}
+	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, ErrClockUntrusted) && s.deps.Health != nil {
+		s.deps.Health.RecordCollectorError("discovery")
+	}
+	return err
+}
+
+func (s *Scheduler) discover(ctx context.Context) error {
+	inv := host.CollectInventory(s.deps.Config.ProcRoot, s.deps.Config.EtcRoot, s.deps.Clock.Now())
 	if s.deps.BootIDProvider != nil {
 		if bid, err := s.deps.BootIDProvider(); err == nil && bid != "" {
 			inv.BootID = bid
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if inv.BootID != "" {
+		s.bootID.Store(&inv.BootID)
+	}
+	now, err := s.trustedTime()
+	if err != nil {
+		return err
+	}
+	inv.UpdatedAtMs = now.UnixMilli()
 	if s.deps.Registry != nil {
 		if err := s.deps.Registry.EnsureHost(ctx, inv, now.UnixMilli()); err != nil {
 			return err
 		}
 	}
 	if s.deps.Discovery != nil && s.deps.Registry != nil {
-		err := s.deps.Discovery.ReconcileAll(ctx, s.deps.Registry, now.UnixMilli(), s.deps.Config.IncludePerCoreCPU, inv.CPUThreads)
-		if s.deps.Normalizer != nil {
-			s.deps.Normalizer.SetNICIncludeFunc(s.deps.Discovery.Topology().IncludeNICInHostAggregate)
-		}
-		return err
+		return s.deps.Discovery.ReconcileAll(ctx, s.deps.Registry, now.UnixMilli(), s.deps.Config.IncludePerCoreCPU)
 	}
 	return nil
 }
@@ -283,16 +362,32 @@ func (s *Scheduler) RunSensorsOnce(ctx context.Context) error {
 // RunPersistOnce runs fast collectors + cached slow snapshots, normalizes under ProfilePersist, and writes to SQLite.
 func (s *Scheduler) RunPersistOnce(ctx context.Context) error {
 	bootID := s.readBootID()
-	snaps := s.runFastCollectors(ctx)
-	if s.deps.FSCollector != nil {
-		if fsSnap := s.deps.FSCollector.CachedSnapshot(); len(fsSnap.Samples) > 0 {
-			snaps = append(snaps, fsSnap)
+	snaps := s.runFastCollectors(ctx, metrics.ProfilePersist)
+	now, err := s.trustedTime()
+	if err != nil {
+		if s.deps.Normalizer != nil {
+			s.deps.Normalizer.ClearProfile(metrics.ProfilePersist)
+		}
+		return err
+	}
+	mono := s.deps.Clock.Monotonic()
+	snaps = slices.DeleteFunc(snaps, func(snap metrics.RawSnapshot) bool {
+		return !snap.CollectedAt.IsZero() && wallClockJump(snap.CollectedAt, now, mono-snap.Monotonic)
+	})
+	appendCached := func(snap metrics.RawSnapshot) {
+		// A probe can finish while the wall clock is wrong and remain cached after it recovers.
+		snap.Samples = slices.DeleteFunc(snap.Samples, func(sample metrics.RawSample) bool {
+			return wallClockJump(sample.Time, now, mono-sample.Monotonic)
+		})
+		if len(snap.Samples) > 0 {
+			snaps = append(snaps, snap)
 		}
 	}
+	if s.deps.FSCollector != nil {
+		appendCached(s.deps.FSCollector.CachedSnapshot())
+	}
 	if s.deps.SensorCollector != nil && s.deps.Config.IncludeSensors {
-		if senSnap := s.deps.SensorCollector.CachedSnapshot(); len(senSnap.Samples) > 0 {
-			snaps = append(snaps, senSnap)
-		}
+		appendCached(s.deps.SensorCollector.CachedSnapshot())
 	}
 
 	var allPoints []metrics.MetricPoint
@@ -321,7 +416,7 @@ func (s *Scheduler) RunLiveOnce(ctx context.Context) error {
 		return nil
 	}
 	bootID := s.readBootID()
-	snaps := s.runFastCollectors(ctx)
+	snaps := s.runFastCollectors(ctx, metrics.ProfileLive)
 
 	var allPoints []metrics.MetricPoint
 	var warnMsgs []string
@@ -351,7 +446,10 @@ func (s *Scheduler) RunLiveOnce(ctx context.Context) error {
 
 // RunMaintenanceOnce executes Rollup -> Retention and evicts stale tracker baselines.
 func (s *Scheduler) RunMaintenanceOnce(ctx context.Context) error {
-	now := s.deps.Clock.Now()
+	now, err := s.trustedTime()
+	if err != nil {
+		return err
+	}
 	if s.deps.Normalizer != nil {
 		s.deps.Normalizer.EvictStale(now, s.deps.Config.CounterEvictAfter)
 	}
@@ -362,15 +460,63 @@ func (s *Scheduler) RunMaintenanceOnce(ctx context.Context) error {
 	return nil
 }
 
+func (s *Scheduler) trustedTime() (time.Time, error) {
+	s.clockMu.Lock()
+	defer s.clockMu.Unlock()
+	now, mono := s.deps.Clock.Now(), s.clockElapsed()
+	jumped := wallClockJump(s.clockWall, now, mono-s.clockMono)
+	s.clockWall, s.clockMono = now, mono
+
+	if jumped && s.deps.Health != nil {
+		s.deps.Health.RecordWallClockJump()
+	}
+	var reason string
+	switch {
+	case !s.deps.ClockSynchronized():
+		reason = "Linux does not report a synchronized wall clock"
+		s.clockStableSince = time.Time{}
+	case now.Add(maxWallClockSkew).Before(s.clockFloor):
+		reason = "wall clock is behind previously trusted history"
+		s.clockStableSince = time.Time{}
+	case jumped || s.clockError != "":
+		if jumped || s.clockStableSince.IsZero() ||
+			wallClockJump(s.clockStableSince, now, mono-s.clockStableMono) {
+			s.clockStableSince, s.clockStableMono = now, mono
+		}
+		if mono-s.clockStableMono < clockRecovery {
+			reason = "waiting for the synchronized wall clock to stabilize"
+		}
+	}
+	if s.clockError != reason {
+		if reason == "" {
+			s.deps.Logger.Info("trusted wall clock restored")
+		} else {
+			s.deps.Logger.Warn("historical writes and maintenance paused", slog.String("reason", reason))
+		}
+		s.clockError = reason
+		if s.deps.Health != nil {
+			s.deps.Health.SetClockError(reason)
+		}
+	}
+	if reason != "" {
+		return time.Time{}, fmt.Errorf("%w: %s", ErrClockUntrusted, reason)
+	}
+	if now.After(s.clockFloor) {
+		s.clockFloor = now
+	}
+	return now, nil
+}
+
+func wallClockJump(before, after time.Time, elapsed time.Duration) bool {
+	offset := after.Sub(before) - elapsed
+	return offset > maxWallClockSkew || offset < -maxWallClockSkew
+}
+
 func (s *Scheduler) readBootID() string {
-	if s.deps.BootIDProvider == nil {
-		return ""
+	if id := s.bootID.Load(); id != nil {
+		return *id
 	}
-	id, err := s.deps.BootIDProvider()
-	if err != nil {
-		return ""
-	}
-	return id
+	return ""
 }
 
 func (s *Scheduler) handleWarnings(warnings []tracker.Warning) {
@@ -387,31 +533,41 @@ func (s *Scheduler) handleWarnings(warnings []tracker.Warning) {
 	}
 }
 
-func (s *Scheduler) runFastCollectors(ctx context.Context) []metrics.RawSnapshot {
+type fastResult struct {
+	name string
+	snap metrics.RawSnapshot
+	err  error
+	dur  time.Duration
+}
+
+type fastFlight struct {
+	profile metrics.Profile
+	done    chan struct{}
+	result  fastResult
+}
+
+func (s *Scheduler) collectorTimeout() time.Duration {
+	if s.deps.Config.CollectorTimeout <= 0 {
+		return 5 * time.Second
+	}
+	return s.deps.Config.CollectorTimeout
+}
+
+func (s *Scheduler) runFastCollectors(ctx context.Context, profile metrics.Profile) []metrics.RawSnapshot {
 	if len(s.deps.FastCollectors) == 0 {
 		return nil
 	}
 
-	type colResult struct {
-		name string
-		snap metrics.RawSnapshot
-		err  error
-		dur  time.Duration
-	}
-
-	timeout := s.deps.Config.CollectorTimeout
-	if timeout <= 0 {
-		timeout = 5 * time.Second
-	}
-	cycleCtx, cancel := context.WithTimeout(ctx, timeout)
+	cycleCtx, cancel := context.WithTimeout(ctx, s.collectorTimeout())
 	defer cancel()
 
-	resCh := make(chan colResult, len(s.deps.FastCollectors))
+	resCh := make(chan fastResult, len(s.deps.FastCollectors))
 	launched := 0
 
 	for _, col := range s.deps.FastCollectors {
 		name := col.Name()
-		if !s.tryAcquireInFlight(name) {
+		flight := s.startOrShareCollector(ctx, col, name, profile)
+		if flight == nil {
 			s.deps.Logger.Warn("collector skipped because previous execution is still in flight",
 				slog.String("collector", name),
 			)
@@ -422,26 +578,13 @@ func (s *Scheduler) runFastCollectors(ctx context.Context) []metrics.RawSnapshot
 		}
 
 		launched++
-		go func(c metrics.Collector, colName string) {
-			defer s.releaseInFlight(colName)
-
+		go func() {
 			select {
-			case s.fastSem <- struct{}{}:
+			case <-flight.done:
+				resCh <- flight.result
 			case <-cycleCtx.Done():
-				resCh <- colResult{name: colName, err: cycleCtx.Err()}
-				return
 			}
-			defer func() { <-s.fastSem }()
-
-			start := time.Now()
-			snap, err := c.Collect(cycleCtx)
-			resCh <- colResult{
-				name: colName,
-				snap: snap,
-				err:  err,
-				dur:  time.Since(start),
-			}
-		}(col, name)
+		}()
 	}
 
 	var out []metrics.RawSnapshot
@@ -482,18 +625,38 @@ func (s *Scheduler) runFastCollectors(ctx context.Context) []metrics.RawSnapshot
 	return out
 }
 
-func (s *Scheduler) tryAcquireInFlight(name string) bool {
+func (s *Scheduler) startOrShareCollector(ctx context.Context, col metrics.Collector, name string, profile metrics.Profile) *fastFlight {
 	s.inFlightMu.Lock()
 	defer s.inFlightMu.Unlock()
-	if s.inFlight[name] {
-		return false
+	if flight := s.inFlight[name]; flight != nil {
+		if flight.profile == profile {
+			return nil
+		}
+		return flight
 	}
-	s.inFlight[name] = true
-	return true
-}
 
-func (s *Scheduler) releaseInFlight(name string) {
-	s.inFlightMu.Lock()
-	delete(s.inFlight, name)
-	s.inFlightMu.Unlock()
+	flight := &fastFlight{profile: profile, done: make(chan struct{}), result: fastResult{name: name}}
+	s.inFlight[name] = flight
+	go func() {
+		defer func() {
+			s.inFlightMu.Lock()
+			delete(s.inFlight, name)
+			close(flight.done)
+			s.inFlightMu.Unlock()
+		}()
+
+		probeCtx, cancel := context.WithTimeout(ctx, s.collectorTimeout())
+		defer cancel()
+		select {
+		case s.fastSem <- struct{}{}:
+			defer func() { <-s.fastSem }()
+		case <-probeCtx.Done():
+			flight.result.err = probeCtx.Err()
+			return
+		}
+		start := time.Now()
+		flight.result.snap, flight.result.err = col.Collect(probeCtx)
+		flight.result.dur = time.Since(start)
+	}()
+	return flight
 }

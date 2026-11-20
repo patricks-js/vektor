@@ -107,6 +107,7 @@ func buildDSN(absPath string, readOnly bool, busyTimeoutMs int, syncMode string)
 	} else {
 		q.Set("_journal_mode", "WAL")
 		q.Set("_synchronous", syncMode)
+		q.Set("_txlock", "immediate")
 	}
 	u := url.URL{
 		Scheme:   "file",

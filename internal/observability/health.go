@@ -27,6 +27,7 @@ type HealthSnapshot struct {
 	DroppedLiveEvents     int64            `json:"dropped_live_events"`
 	ActiveLiveSubscribers int              `json:"active_live_subscribers"`
 	WallClockJumpCount    int64            `json:"wall_clock_jump_count"`
+	ClockError            string           `json:"clock_error,omitempty"`
 }
 
 // HealthTracker tracks thread-safe runtime health signals required by TECHNICAL_DESIGN_V0.1.md.
@@ -42,6 +43,7 @@ type HealthTracker struct {
 	droppedLiveEvents     int64
 	activeLiveSubscribers int
 	wallClockJumpCount    int64
+	clockError            string
 }
 
 // NewHealthTracker initializes a HealthTracker assuming healthy DB startup until proven otherwise.
@@ -115,12 +117,18 @@ func (h *HealthTracker) RecordWallClockJump() {
 	h.wallClockJumpCount++
 }
 
+func (h *HealthTracker) SetClockError(reason string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.clockError = reason
+}
+
 func (h *HealthTracker) Snapshot() HealthSnapshot {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
 	status := StatusOK
-	if !h.dbOK {
+	if !h.dbOK || h.clockError != "" {
 		status = StatusDegraded
 	}
 
@@ -151,5 +159,6 @@ func (h *HealthTracker) Snapshot() HealthSnapshot {
 		DroppedLiveEvents:     h.droppedLiveEvents,
 		ActiveLiveSubscribers: h.activeLiveSubscribers,
 		WallClockJumpCount:    h.wallClockJumpCount,
+		ClockError:            h.clockError,
 	}
 }

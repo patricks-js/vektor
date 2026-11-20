@@ -9,6 +9,7 @@ import (
 
 	"vektor/internal/config"
 	"vektor/internal/database"
+	"vektor/internal/metrics"
 	"vektor/internal/observability"
 )
 
@@ -74,7 +75,7 @@ func (e *RetentionEngine) Run(ctx context.Context, nowMs int64) (RetentionReport
 	if !has300 {
 		rep.SkippedRaw = true
 	} else {
-		cutoff := nowMs - e.rawMs
+		cutoff := metrics.AlignBucketMs(nowMs-e.rawMs, ResolutionMediumMs)
 		if closed300 < cutoff {
 			cutoff = closed300
 		}
@@ -96,7 +97,7 @@ func (e *RetentionEngine) Run(ctx context.Context, nowMs int64) (RetentionReport
 	if !has3600 {
 		rep.SkippedMedium = true
 	} else {
-		cutoff := nowMs - e.mediumMs
+		cutoff := metrics.AlignBucketMs(nowMs-e.mediumMs, ResolutionLongMs)
 		if closed3600 < cutoff {
 			cutoff = closed3600
 		}
@@ -144,6 +145,24 @@ func (e *RetentionEngine) deleteTierBefore(ctx context.Context, resolutionS int,
 		tx, err := e.db.Writer().BeginTx(ctx, nil)
 		if err != nil {
 			return totalDeleted, err
+		}
+		// A late write may have arrived after rollup finished. Keep its source until repair commits.
+		if resolutionS != ResolutionLongS {
+			var pending bool
+			if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM rollup_dirty)").Scan(&pending); err != nil || pending {
+				_ = tx.Rollback()
+				return totalDeleted, err
+			}
+		}
+		if resolutionS == ResolutionRawS {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO system_meta(key, value) VALUES ('raw_pruned_before_ms', CAST(? AS TEXT))
+				ON CONFLICT(key) DO UPDATE SET value = excluded.value
+				WHERE CAST(excluded.value AS INTEGER) > CAST(system_meta.value AS INTEGER)
+			`, cutoffMs); err != nil {
+				_ = tx.Rollback()
+				return totalDeleted, err
+			}
 		}
 		res, err := tx.ExecContext(ctx, deleteBatchSQL, resolutionS, cutoffMs, e.batchSize)
 		if err != nil {
