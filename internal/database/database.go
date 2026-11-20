@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+	sqlite "modernc.org/sqlite/lib"
 
 	"vektor/internal/config"
 	"vektor/migrations"
@@ -45,6 +47,9 @@ func Open(ctx context.Context, cfg config.Config) (*DB, error) {
 	}
 	if err := os.MkdirAll(filepath.Dir(absPath), 0o750); err != nil {
 		return nil, fmt.Errorf("create database directory: %w", err)
+	}
+	if err := restrictStateFiles(absPath); err != nil {
+		return nil, fmt.Errorf("restrict database file permissions: %w", err)
 	}
 
 	busyMs := cfg.SQLiteBusyTimeoutMs
@@ -95,6 +100,22 @@ func Open(ctx context.Context, cfg config.Config) (*DB, error) {
 		reader: reader,
 		path:   absPath,
 	}, nil
+}
+
+func restrictStateFiles(path string) error {
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return err
+	}
+	if err := errors.Join(f.Chmod(0o600), f.Close()); err != nil {
+		return err
+	}
+	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+		if err := os.Chmod(path+suffix, 0o600); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
 }
 
 func buildDSN(absPath string, readOnly bool, busyTimeoutMs int, syncMode string) string {
@@ -209,16 +230,27 @@ func migrate(ctx context.Context, writer *sql.DB) error {
 		if err != nil {
 			return fmt.Errorf("begin migration %s: %w", m.name, err)
 		}
-		if _, err := tx.ExecContext(ctx, m.sql); err != nil {
-			_ = tx.Rollback()
-			return fmt.Errorf("exec migration %s: %w", m.name, err)
-		}
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO schema_migrations(version, name, applied_at_ms) VALUES (?, ?, ?)`,
+		// Claim the version with a write inside the transaction. A CLI command and
+		// the daemon may have both found this migration pending before either wrote.
+		result, err := tx.ExecContext(ctx,
+			`INSERT INTO schema_migrations(version, name, applied_at_ms) VALUES (?, ?, ?)
+			 ON CONFLICT(version) DO NOTHING`,
 			m.version, m.name, time.Now().UTC().UnixMilli(),
-		); err != nil {
+		)
+		if err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("record migration %s: %w", m.name, err)
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("claim migration %s: %w", m.name, err)
+		}
+		if count == 1 {
+			if _, err := tx.ExecContext(ctx, m.sql); err != nil {
+				_ = tx.Rollback()
+				return fmt.Errorf("exec migration %s: %w", m.name, err)
+			}
 		}
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("commit migration %s: %w", m.name, err)
@@ -361,4 +393,26 @@ func IsTransientSQLiteError(err error) bool {
 	}
 	msg := strings.ToUpper(err.Error())
 	return strings.Contains(msg, "SQLITE_BUSY") || strings.Contains(msg, "SQLITE_LOCKED")
+}
+
+// IsUnavailable reports storage errors for which an HTTP client can retry later.
+func IsUnavailable(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, sql.ErrConnDone) || errors.Is(err, driver.ErrBadConn) {
+		return true
+	}
+	var coder interface{ Code() int }
+	if errors.As(err, &coder) {
+		switch coder.Code() & 0xff {
+		case sqlite.SQLITE_BUSY, sqlite.SQLITE_LOCKED, sqlite.SQLITE_READONLY, sqlite.SQLITE_IOERR,
+			sqlite.SQLITE_FULL, sqlite.SQLITE_CANTOPEN, sqlite.SQLITE_PROTOCOL:
+			return true
+		}
+	}
+	// database/sql's closed-pool error is private.
+	for cause := err; cause != nil; cause = errors.Unwrap(cause) {
+		if cause.Error() == "sql: database is closed" {
+			return true
+		}
+	}
+	return false
 }

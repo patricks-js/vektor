@@ -28,6 +28,8 @@ const (
 	maxMetadataJSONBytes = 64 * 1024
 )
 
+const resourceColumns = "id, kind, external_key, display_name, metadata_json, active, first_seen_ms, last_seen_ms"
+
 // Resource models a persistent monitored entity stored in SQLite `resources`.
 type Resource struct {
 	ID           string `json:"id"`
@@ -240,7 +242,7 @@ func (r *Registry) Reconcile(ctx context.Context, kind string, items []Discovere
 
 // List returns resources filtered optionally by kind and active status.
 func (r *Registry) List(ctx context.Context, kind string, includeInactive bool) ([]Resource, error) {
-	query := `SELECT id, kind, external_key, display_name, metadata_json, active, first_seen_ms, last_seen_ms FROM resources WHERE 1=1`
+	query := `SELECT ` + resourceColumns + ` FROM resources WHERE 1=1`
 	var args []any
 	if strings.TrimSpace(kind) != "" {
 		query += ` AND kind = ?`
@@ -250,7 +252,26 @@ func (r *Registry) List(ctx context.Context, kind string, includeInactive bool) 
 		query += ` AND active = 1`
 	}
 	query += ` ORDER BY kind ASC, display_name ASC, id ASC`
+	return r.list(ctx, query, args...)
+}
 
+// ListPage uses the immutable resource ID as a cursor, including across renames.
+func (r *Registry) ListPage(ctx context.Context, kind string, active *bool, after string, limit int) ([]Resource, error) {
+	query := `SELECT ` + resourceColumns + ` FROM resources WHERE id > ?`
+	args := []any{after}
+	if kind != "" {
+		query += ` AND kind = ?`
+		args = append(args, kind)
+	}
+	if active != nil {
+		query += ` AND active = ?`
+		args = append(args, *active)
+	}
+	query += ` ORDER BY id ASC LIMIT ?`
+	return r.list(ctx, query, append(args, limit)...)
+}
+
+func (r *Registry) list(ctx context.Context, query string, args ...any) ([]Resource, error) {
 	rows, err := r.db.Reader().QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -259,30 +280,34 @@ func (r *Registry) List(ctx context.Context, kind string, includeInactive bool) 
 
 	var out []Resource
 	for rows.Next() {
-		var res Resource
-		var activeInt int
-		if err := rows.Scan(&res.ID, &res.Kind, &res.ExternalKey, &res.DisplayName, &res.MetadataJSON, &activeInt, &res.FirstSeenMs, &res.LastSeenMs); err != nil {
+		res, err := scanResource(rows)
+		if err != nil {
 			return nil, err
 		}
-		res.Active = activeInt == 1
 		out = append(out, res)
 	}
 	return out, rows.Err()
 }
 
+// Get fetches a resource by persistent ID regardless of active state.
+func (r *Registry) Get(ctx context.Context, id string) (Resource, error) {
+	return scanResource(r.db.Reader().QueryRowContext(ctx, `SELECT `+resourceColumns+` FROM resources WHERE id = ?`, id))
+}
+
+func scanResource(row interface{ Scan(...any) error }) (Resource, error) {
+	var res Resource
+	var active int
+	err := row.Scan(&res.ID, &res.Kind, &res.ExternalKey, &res.DisplayName, &res.MetadataJSON, &active, &res.FirstSeenMs, &res.LastSeenMs)
+	res.Active = active == 1
+	return res, err
+}
+
 // GetHost reads the host resource and decodes its cached Inventory metadata.
 func (r *Registry) GetHost(ctx context.Context) (Resource, Inventory, error) {
-	var res Resource
-	var activeInt int
-	err := r.db.Reader().QueryRowContext(ctx, `
-		SELECT id, kind, external_key, display_name, metadata_json, active, first_seen_ms, last_seen_ms
-		FROM resources
-		WHERE id = ?
-	`, HostResourceID).Scan(&res.ID, &res.Kind, &res.ExternalKey, &res.DisplayName, &res.MetadataJSON, &activeInt, &res.FirstSeenMs, &res.LastSeenMs)
+	res, err := r.Get(ctx, HostResourceID)
 	if err != nil {
 		return Resource{}, Inventory{}, err
 	}
-	res.Active = activeInt == 1
 	var inv Inventory
 	if res.MetadataJSON != "" && res.MetadataJSON != "{}" {
 		if err := json.Unmarshal([]byte(res.MetadataJSON), &inv); err != nil {

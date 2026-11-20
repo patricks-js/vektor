@@ -64,11 +64,10 @@ func (h *LiveHub) Subscribe() (uint64, <-chan LiveSnapshot, func()) {
 	h.subs[id] = sub
 	count := len(h.subs)
 	onFirst := h.onFirst
-	h.mu.Unlock()
-
 	if h.health != nil {
 		h.health.SetLiveSubscribers(count)
 	}
+	h.mu.Unlock()
 	if wasEmpty && onFirst != nil {
 		onFirst()
 	}
@@ -93,11 +92,10 @@ func (h *LiveHub) removeSubscriber(id uint64) {
 	count := len(h.subs)
 	nowEmpty := ok && count == 0
 	onLast := h.onLast
-	h.mu.Unlock()
-
 	if h.health != nil {
 		h.health.SetLiveSubscribers(count)
 	}
+	h.mu.Unlock()
 	if nowEmpty && onLast != nil {
 		onLast()
 	}

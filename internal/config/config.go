@@ -16,11 +16,13 @@ const (
 
 // Config defines runtime, scheduling, storage, and Linux discovery settings for vektord.
 type Config struct {
-	DataDir  string
-	DBPath   string
-	ProcRoot string
-	SysRoot  string
-	EtcRoot  string
+	HTTP HTTPConfig
+
+	DataDir     string
+	DBPath      string
+	ProcRoot    string
+	SysRoot     string
+	EtcRoot     string
 	DevDiskRoot string
 
 	PersistInterval   time.Duration
@@ -52,6 +54,11 @@ type Config struct {
 // Default returns a production-safe configuration aligned with TECHNICAL_DESIGN_V0.1.md.
 func Default() Config {
 	return Config{
+		HTTP: HTTPConfig{
+			ListenAddr:     "127.0.0.1:8080",
+			SessionTTL:     24 * time.Hour,
+			MaxLiveClients: 16,
+		},
 		DataDir:     "./data",
 		ProcRoot:    "/proc",
 		SysRoot:     "/sys",
@@ -104,6 +111,7 @@ func (c Config) EffectiveDBPath() string {
 // Validate checks bounds and invariants across intervals, retention, concurrency, and SQLite settings.
 func (c Config) Validate() error {
 	var errs []error
+	errs = c.HTTP.validate(errs)
 
 	if strings.TrimSpace(c.DataDir) == "" && strings.TrimSpace(c.DBPath) == "" {
 		errs = append(errs, errors.New("data_dir or db_path must be set"))

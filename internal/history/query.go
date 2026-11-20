@@ -18,9 +18,12 @@ import (
 )
 
 const (
-	defaultMaxQueryPoints = 600
-	hardMaxQueryPoints    = 2000
+	DefaultMaxQueryPoints = 600
+	MaxQueryPoints        = 2000
 )
+
+// ErrPointLimit indicates that a populated historical level cannot fit the point budget.
+var ErrPointLimit = errors.New("historical resolution exceeds point limit")
 
 // SeriesQuery defines parameters for querying aggregated time-series buckets.
 type SeriesQuery struct {
@@ -108,6 +111,14 @@ func (s *QueryService) ListResources(ctx context.Context, kind string, includeIn
 	return s.registry.List(ctx, kind, includeInactive)
 }
 
+func (s *QueryService) GetResource(ctx context.Context, id string) (host.Resource, error) {
+	return s.registry.Get(ctx, id)
+}
+
+func (s *QueryService) ListResourcePage(ctx context.Context, kind string, active *bool, after string, limit int) ([]host.Resource, error) {
+	return s.registry.ListPage(ctx, kind, active, after, limit)
+}
+
 // ClockFloor returns the most recent durable timestamp set by the historical pipeline.
 func (s *QueryService) ClockFloor(ctx context.Context) (time.Time, error) {
 	var floor sql.NullInt64
@@ -139,10 +150,10 @@ func (s *QueryService) QuerySeries(ctx context.Context, q SeriesQuery) (SeriesRe
 
 	maxPoints := q.MaxPoints
 	if maxPoints <= 0 {
-		maxPoints = defaultMaxQueryPoints
+		maxPoints = DefaultMaxQueryPoints
 	}
-	if maxPoints > hardMaxQueryPoints {
-		maxPoints = hardMaxQueryPoints
+	if maxPoints > MaxQueryPoints {
+		maxPoints = MaxQueryPoints
 	}
 
 	tx, err := s.db.Reader().BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
@@ -195,7 +206,7 @@ func (s *QueryService) QuerySeries(ctx context.Context, q SeriesQuery) (SeriesRe
 			continue
 		}
 		if len(points) == maxPoints {
-			return SeriesResult{}, fmt.Errorf("query exceeds %d points at %ds resolution; shorten the range or choose a coarser step", maxPoints, resS)
+			return SeriesResult{}, fmt.Errorf("%w: query exceeds %d points at %ds resolution; shorten the range or choose a coarser step", ErrPointLimit, maxPoints, resS)
 		}
 		cov := math.Min(1.0, float64(count)/float64(expected))
 		points = append(points, SeriesPoint{
@@ -225,10 +236,19 @@ func (s *QueryService) QuerySeries(ctx context.Context, q SeriesQuery) (SeriesRe
 }
 
 func resolveStep(ctx context.Context, tx *sql.Tx, q SeriesQuery, maxPoints int) (int, error) {
-	step := strings.ToLower(strings.TrimSpace(q.Step))
+	res, err := ParseStep(q.Step)
+	if err != nil || res != 0 {
+		return res, err
+	}
+	return autoSelectResolution(ctx, tx, q, maxPoints)
+}
+
+// ParseStep returns the requested resolution in seconds, or zero for automatic selection.
+func ParseStep(value string) (int, error) {
+	step := strings.ToLower(strings.TrimSpace(value))
 	switch step {
 	case "", "auto":
-		return autoSelectResolution(ctx, tx, q, maxPoints)
+		return 0, nil
 	case "30", "30s":
 		return ResolutionRawS, nil
 	case "300", "300s", "5m":
@@ -241,7 +261,7 @@ func resolveStep(ctx context.Context, tx *sql.Tx, q SeriesQuery, maxPoints int) 
 				return v, nil
 			}
 		}
-		return 0, fmt.Errorf("unsupported step %q (expected auto, 30, 300, or 3600)", q.Step)
+		return 0, fmt.Errorf("unsupported step %q (expected auto, 30, 300, or 3600)", value)
 	}
 }
 
@@ -279,7 +299,7 @@ func autoSelectResolution(ctx context.Context, tx *sql.Tx, q SeriesQuery, maxPoi
 	if !hasData {
 		return ResolutionRawS, nil
 	}
-	return 0, fmt.Errorf("no populated resolution fits %d points; shorten the range", maxPoints)
+	return 0, fmt.Errorf("%w: no populated resolution fits %d points; shorten the range", ErrPointLimit, maxPoints)
 }
 
 // GetHealth checks live DB connectivity, reads file sizes, and merges HealthTracker counters.

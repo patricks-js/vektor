@@ -11,9 +11,11 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
+	"vektor/internal/auth"
 	"vektor/internal/config"
 	"vektor/internal/database"
 	"vektor/internal/history"
@@ -29,15 +31,22 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	if err := run(ctx, os.Args[1:], os.Stdout, os.Stderr); err != nil {
+	if err := run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintf(os.Stderr, "vektord: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	var command string
+	if len(args) > 0 && (args[0] == "bootstrap-admin" || args[0] == "revoke-sessions") {
+		command, args = args[0], args[1:]
+	}
 	cfg := config.Default()
 	applyEnvDefaults(&cfg)
+	if err := applyHTTPEnv(&cfg.HTTP); err != nil {
+		return err
+	}
 
 	logLevelStr := envOrDefault("VEKTOR_LOG_LEVEL", "info")
 	var checkMode bool
@@ -48,10 +57,26 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	fs.DurationVar(&cfg.PersistInterval, "persist-interval", cfg.PersistInterval, "Persistence collection interval (env VEKTOR_PERSIST_INTERVAL)")
 	fs.DurationVar(&cfg.LiveInterval, "live-interval", cfg.LiveInterval, "On-demand live collection interval (env VEKTOR_LIVE_INTERVAL)")
 	fs.DurationVar(&cfg.DiscoveryInterval, "discovery-interval", cfg.DiscoveryInterval, "Resource discovery interval (env VEKTOR_DISCOVERY_INTERVAL)")
+	fs.StringVar(&cfg.HTTP.ListenAddr, "http-addr", cfg.HTTP.ListenAddr, "HTTP listen host:port (env VEKTOR_HTTP_ADDR)")
+	fs.StringVar(&cfg.HTTP.PublicOrigin, "public-origin", cfg.HTTP.PublicOrigin, "External HTTP(S) origin (env VEKTOR_PUBLIC_ORIGIN)")
+	fs.StringVar(&cfg.HTTP.TLSCert, "tls-cert", cfg.HTTP.TLSCert, "HTTPS certificate file (env VEKTOR_TLS_CERT)")
+	fs.StringVar(&cfg.HTTP.TLSKey, "tls-key", cfg.HTTP.TLSKey, "HTTPS private key file (env VEKTOR_TLS_KEY)")
+	fs.DurationVar(&cfg.HTTP.SessionTTL, "session-ttl", cfg.HTTP.SessionTTL, "Administrative session lifetime (env VEKTOR_SESSION_TTL)")
+	fs.IntVar(&cfg.HTTP.MaxLiveClients, "max-live-clients", cfg.HTTP.MaxLiveClients, "Maximum SSE subscribers (env VEKTOR_MAX_LIVE_CLIENTS)")
 	fs.StringVar(&logLevelStr, "log-level", logLevelStr, "Structured log level: debug, info, warn, error (env VEKTOR_LOG_LEVEL)")
 	fs.BoolVar(&checkMode, "check", false, "Run discovery + single collection/write cycle, print JSON status, and exit")
+	fs.Usage = func() {
+		fmt.Fprintln(stderr, "Usage: vektord [bootstrap-admin | revoke-sessions] [flags]")
+		fs.PrintDefaults()
+	}
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
+	}
+	if fs.NArg() > 0 || (command != "" && checkMode) {
+		return errors.New("invalid arguments; see --help")
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -72,6 +97,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		_ = db.Checkpoint(shutdownCtx, "PASSIVE")
 		_ = db.Close()
 	}()
+
+	sessions := auth.NewStore(db, cfg.HTTP.SessionTTL)
+	if command != "" {
+		return runAdmin(ctx, command, sessions, stdin, stdout, stderr)
+	}
 
 	registry := host.NewRegistry(db)
 	disc := collector.NewDiscovery(cfg.ProcRoot, cfg.SysRoot, cfg.DevDiskRoot, cfg.ExcludedFSTypes, cfg.IncludeSensors)
@@ -169,12 +199,29 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		slog.Duration("discovery_interval", cfg.DiscoveryInterval),
 	)
 
-	err = sched.Run(ctx)
-	if errors.Is(err, context.Canceled) {
-		logger.Info("vektord stopped cleanly on signal")
-		return nil
+	return runDaemon(ctx, cfg.HTTP, logger, sched, qs, sessions, hub)
+}
+
+func applyHTTPEnv(cfg *config.HTTPConfig) error {
+	cfg.ListenAddr = envOrDefault("VEKTOR_HTTP_ADDR", cfg.ListenAddr)
+	cfg.PublicOrigin = os.Getenv("VEKTOR_PUBLIC_ORIGIN")
+	cfg.TLSCert = os.Getenv("VEKTOR_TLS_CERT")
+	cfg.TLSKey = os.Getenv("VEKTOR_TLS_KEY")
+	if value := os.Getenv("VEKTOR_SESSION_TTL"); value != "" {
+		d, err := time.ParseDuration(value)
+		if err != nil {
+			return errors.New("invalid VEKTOR_SESSION_TTL")
+		}
+		cfg.SessionTTL = d
 	}
-	return err
+	if value := os.Getenv("VEKTOR_MAX_LIVE_CLIENTS"); value != "" {
+		count, err := strconv.Atoi(value)
+		if err != nil {
+			return errors.New("invalid VEKTOR_MAX_LIVE_CLIENTS")
+		}
+		cfg.MaxLiveClients = count
+	}
+	return nil
 }
 
 func applyEnvDefaults(cfg *config.Config) {
