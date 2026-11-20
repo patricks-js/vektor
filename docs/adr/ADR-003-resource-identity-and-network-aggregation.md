@@ -19,8 +19,8 @@ Linux device names (`sda`, `eth0`, `hwmon3`) are unstable across reboots and hot
 3. **Virtual NICs & host network aggregate rule**:
    - Virtual NICs (`lo`, bridges, bonds, `veth*`, tunnels) are inventoried and remain inspectable individually.
    - Host-level aggregate rates (`net.rx_bytes_per_sec` and `net.tx_bytes_per_sec` on `host:local`) sum valid per-NIC rates **only** for NICs with `include_in_host_aggregate = true`:
-     - Included: non-loopback physical NICs not enslaved to a bond/bridge master (`!is_virtual && !has_master`), plus top-level bond masters (`is_bond && !has_master`).
-     - Excluded: loopback (`lo`), bridges, `veth*`/virtual devices, and bond/bridge slave interfaces.
+     - Included: non-loopback physical NICs (`!is_virtual && !is_loopback`) unless enslaved to a bond (`!master_is_bond`), plus top-level bond masters (`is_bond && !master_is_bond`). This supports plain hosts, bridged hosts (`enp1s0 -> br0 <- veth*`), bonded hosts (`enp2s0+enp3s0 -> bond0`), and bonded+bridged hosts without double counting.
+     - Excluded (still inventoried individually): loopback (`lo`), bridges (`is_bridge`), virtual/container/tunnel NICs (`veth*`, `docker*`, `virbr*`, `tun*`, `wg*`, VLANs), and bond slave interfaces (`master_is_bond`).
 
 ## Consequences
 - Device renames (`eth0` -> `enp1s0`) or LVM minor swaps do not split historical series when stable hardware/DM keys are available.
