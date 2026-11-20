@@ -2,6 +2,8 @@
 
 **Estado:** Implementado. O responsável pelo projeto confirmou o aceite no Ubuntu Server 26.04.1 LTS.
 
+O contrato HTTP implementado na v0.2 está no [guia da API](docs/API_V0.2.md) e no [OpenAPI](docs/openapi-v1.yaml).
+
 **Plataforma:** Ubuntu Server 26.04 LTS (`amd64` inicialmente; `arm64` após validação)  
 **Escopo:** monitoramento local do host; sem gerenciamento de VMs/containers nesta versão  
 **Referência de estudo:** `BESZEL-TECHNICAL-RESEARCH.md`, Beszel commit `82a8fe60` (conclusões de análise estática, não contrato de implementação)

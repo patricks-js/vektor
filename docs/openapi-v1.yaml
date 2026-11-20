@@ -1,0 +1,486 @@
+openapi: 3.1.0
+info:
+  title: Vektor HTTP API
+  version: 1.0.0
+  description: API do Vektor v0.2. Consulte docs/API_V0.2.md para operação e exemplos com curl.
+servers:
+  - url: http://127.0.0.1:8080
+    description: Endereço padrão para desenvolvimento local
+tags:
+  - name: Monitoring
+    description: Inventário, histórico, diagnóstico e streaming
+  - name: Authentication
+    description: Login, consulta e revogação de sessões
+security:
+  - sessionCookie: []
+paths:
+  /api/v1/host:
+    get:
+      tags: [Monitoring]
+      operationId: getHost
+      summary: Consulta o inventário do host e o uptime atual
+      responses:
+        '200':
+          description: Inventário obtido da última descoberta
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Host' }
+        '400': { $ref: '#/components/responses/Invalid' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/Limited' }
+        '500': { $ref: '#/components/responses/Internal' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /api/v1/resources:
+    get:
+      tags: [Monitoring]
+      operationId: listResources
+      summary: Lista recursos por ID persistente em ordem crescente
+      parameters:
+        - in: query
+          name: kind
+          schema: { $ref: '#/components/schemas/ResourceKind' }
+        - in: query
+          name: state
+          schema: { type: string, enum: [active, inactive, all], default: active }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - in: query
+          name: cursor
+          description: Use next_cursor da resposta anterior com os mesmos filtros.
+          schema: { $ref: '#/components/schemas/ResourceID' }
+      responses:
+        '200':
+          description: Página de recursos
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResourcePage' }
+        '400': { $ref: '#/components/responses/Invalid' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/Limited' }
+        '500': { $ref: '#/components/responses/Internal' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /api/v1/resources/{id}:
+    get:
+      tags: [Monitoring]
+      operationId: getResource
+      summary: Consulta um recurso ativo ou inativo pelo ID persistente
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { $ref: '#/components/schemas/ResourceID' }
+      responses:
+        '200':
+          description: Detalhe do recurso
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Resource' }
+        '400': { $ref: '#/components/responses/Invalid' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/ResourceNotFound' }
+        '429': { $ref: '#/components/responses/Limited' }
+        '500': { $ref: '#/components/responses/Internal' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /api/v1/metrics:
+    get:
+      tags: [Monitoring]
+      operationId: getMetrics
+      summary: Consulta uma série histórica em uma única resolução
+      description: >
+        A janela é limitada a 90 dias. O primeiro bucket começa no múltiplo da
+        resolução em ou antes de from. O início de cada bucket retornado é
+        anterior a to. Apenas buckets com dados são retornados.
+      parameters:
+        - in: query
+          name: resource_id
+          required: true
+          schema: { $ref: '#/components/schemas/ResourceID' }
+        - in: query
+          name: metric
+          required: true
+          description: Chave canônica do catálogo compatível com o tipo do recurso.
+          schema: { type: string }
+          example: load.1m
+        - in: query
+          name: from
+          required: true
+          schema: { $ref: '#/components/schemas/QueryTimestamp' }
+        - in: query
+          name: to
+          required: true
+          description: Deve ser posterior a from.
+          schema: { $ref: '#/components/schemas/QueryTimestamp' }
+        - in: query
+          name: step
+          description: Valores de resolução em segundos ou os aliases indicados.
+          schema:
+            type: string
+            default: auto
+            enum: [auto, '30', 30s, '300', 300s, 5m, '3600', 3600s, 1h]
+        - in: query
+          name: max_points
+          schema: { type: integer, minimum: 1, maximum: 2000, default: 600 }
+      responses:
+        '200':
+          description: Série e resolução efetiva. Uma consulta sem dados retorna points vazio.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Series' }
+        '400': { $ref: '#/components/responses/Invalid' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/ResourceNotFound' }
+        '422':
+          description: range_limit para intervalos maiores que 90 dias ou point_limit quando nenhum nível solicitado cabe no limite.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/Limited' }
+        '500': { $ref: '#/components/responses/Internal' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /api/v1/health:
+    get:
+      tags: [Monitoring]
+      operationId: getHealth
+      summary: Consulta diagnóstico autenticado do daemon
+      responses:
+        '200':
+          description: Diagnóstico. O relógio pode estar degradado mesmo com SQLite disponível.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+        '400': { $ref: '#/components/responses/Invalid' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/Limited' }
+        '500': { $ref: '#/components/responses/Internal' }
+        '503':
+          description: SQLite indisponível. Se a sessão puder ser verificada, inclui diagnóstico sanitizado.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Error'
+                  - type: object
+                    properties:
+                      diagnostics: { $ref: '#/components/schemas/Health' }
+  /api/v1/stream/live:
+    get:
+      tags: [Monitoring]
+      operationId: streamLive
+      summary: Recebe snapshots efêmeros por Server-Sent Events
+      description: >
+        Envia um comentário inicial, eventos snapshot com JSON e comentários
+        de heartbeat a cada 15 segundos. O cliente deve aceitar perdas em caso
+        de backpressure. Reconexões recebem dados novos.
+      responses:
+        '200':
+          description: Stream aberto
+          headers:
+            X-Accel-Buffering:
+              schema: { type: string, const: 'no' }
+          content:
+            text/event-stream:
+              schema: { type: string }
+              x-event-schemas:
+                snapshot:
+                  type: object
+                  required: [collected_at, points, warning_count, truncated]
+                  properties:
+                    collected_at: { type: string, format: date-time }
+                    points:
+                      type: array
+                      maxItems: 8192
+                      items:
+                        type: object
+                        required: [resource_id, metric, timestamp_ms, value]
+                        properties:
+                          resource_id: { type: string, pattern: '^[A-Za-z0-9:_-]{1,128}$' }
+                          metric: { type: string }
+                          timestamp_ms: { type: integer, format: int64 }
+                          value: { type: number }
+                    warning_count: { type: integer, minimum: 0 }
+                    truncated: { type: boolean }
+              example: |
+                : connected
+
+                event: snapshot
+                data: {"collected_at":"2026-11-20T12:00:00Z","points":[{"resource_id":"host:local","metric":"load.1m","timestamp_ms":1795176000000,"value":0.4}],"warning_count":0,"truncated":false}
+
+                : heartbeat
+
+        '400': { $ref: '#/components/responses/Invalid' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/Limited' }
+        '500': { $ref: '#/components/responses/Internal' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /api/v1/auth/login:
+    post:
+      tags: [Authentication]
+      operationId: login
+      summary: Autentica o administrador e cria uma sessão
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Login' }
+      responses:
+        '200':
+          description: Sessão criada
+          headers:
+            Set-Cookie:
+              description: Cookie HttpOnly e SameSite=Strict com Path=/api/v1. Inclui Secure em HTTPS.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Session' }
+        '400': { $ref: '#/components/responses/Invalid' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413':
+          description: Corpo de login maior que 8192 bytes
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/Limited' }
+        '500': { $ref: '#/components/responses/Internal' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /api/v1/auth/logout:
+    post:
+      tags: [Authentication]
+      operationId: logout
+      summary: Revoga a sessão atual
+      parameters:
+        - in: header
+          name: X-CSRF-Token
+          required: true
+          description: csrf_token da sessão atual obtido de login ou auth/me.
+          schema: { $ref: '#/components/schemas/CSRFToken' }
+      responses:
+        '200':
+          description: Sessão revogada
+          headers:
+            Set-Cookie:
+              description: Expira o cookie de sessão no caminho /api/v1.
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean, const: true }
+        '400': { $ref: '#/components/responses/Invalid' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/Limited' }
+        '500': { $ref: '#/components/responses/Internal' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /api/v1/auth/me:
+    get:
+      tags: [Authentication]
+      operationId: getSession
+      summary: Consulta a sessão atual
+      responses:
+        '200':
+          description: Sessão autenticada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Session' }
+        '400': { $ref: '#/components/responses/Invalid' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/Limited' }
+        '500': { $ref: '#/components/responses/Internal' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: vektor_session
+      description: Token opaco do administrador emitido por login.
+  responses:
+    Invalid:
+      description: Requisição ou parâmetros inválidos
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthenticated:
+      description: Credenciais inválidas ou sessão ausente, expirada ou revogada
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Host, Origin ou token CSRF rejeitado
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ResourceNotFound:
+      description: ID de recurso inexistente
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Limited:
+      description: Limite de tentativas ou de capacidade atingido
+      headers:
+        Retry-After:
+          description: Intervalo sugerido antes da próxima tentativa, em segundos.
+          schema: { type: integer, minimum: 1 }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Internal:
+      description: Falha interna
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unavailable:
+      description: SQLite ou inventário temporariamente indisponível
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string, example: invalid_parameters }
+        message: { type: string, example: Unsupported step }
+    Login:
+      type: object
+      required: [username, password]
+      additionalProperties: false
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: O administrador local usa o nome admin.
+          example: admin
+        password:
+          type: string
+          format: password
+          minLength: 1
+          description: Senha UTF-8 com até 1024 bytes. O bootstrap exige pelo menos 12 bytes.
+    CSRFToken:
+      type: string
+      pattern: '^[A-Za-z0-9_-]{43}$'
+    Session:
+      type: object
+      required: [username, expires_at, csrf_token]
+      properties:
+        username: { type: string, const: admin }
+        expires_at: { type: string, format: date-time }
+        csrf_token: { $ref: '#/components/schemas/CSRFToken' }
+    ResourceID:
+      type: string
+      pattern: '^[A-Za-z0-9:_-]{1,128}$'
+      example: 'host:local'
+    ResourceKind:
+      type: string
+      enum: [host, cpu_core, disk, filesystem, nic, sensor]
+    Resource:
+      type: object
+      required: [id, kind, external_key, display_name, metadata_json, active, first_seen_ms, last_seen_ms]
+      properties:
+        id: { $ref: '#/components/schemas/ResourceID' }
+        kind: { $ref: '#/components/schemas/ResourceKind' }
+        external_key: { type: string }
+        display_name: { type: string }
+        metadata_json: { type: string, contentMediaType: application/json }
+        active: { type: boolean }
+        first_seen_ms: { type: integer, format: int64 }
+        last_seen_ms: { type: integer, format: int64 }
+    ResourcePage:
+      type: object
+      required: [resources]
+      properties:
+        resources:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/Resource' }
+        next_cursor: { $ref: '#/components/schemas/ResourceID' }
+    Inventory:
+      type: object
+      required: [hostname, os_name, os_version, os_pretty, kernel, arch, cpu_model, cpu_cores, cpu_threads, memory_total_bytes, boot_id, updated_at_ms]
+      properties:
+        hostname: { type: string }
+        os_name: { type: string }
+        os_version: { type: string }
+        os_pretty: { type: string }
+        kernel: { type: string }
+        arch: { type: string }
+        cpu_model: { type: string }
+        cpu_cores: { type: integer, minimum: 0 }
+        cpu_threads: { type: integer, minimum: 0 }
+        memory_total_bytes: { type: integer, minimum: 0 }
+        boot_id: { type: string }
+        updated_at_ms: { type: integer, format: int64 }
+    Host:
+      type: object
+      required: [resource, inventory]
+      properties:
+        resource: { $ref: '#/components/schemas/Resource' }
+        inventory: { $ref: '#/components/schemas/Inventory' }
+        uptime_seconds: { type: integer, format: int64, minimum: 0 }
+    QueryTimestamp:
+      description: Instante após o epoch em RFC 3339 com fuso ou em milissegundos Unix.
+      oneOf:
+        - { type: string, format: date-time }
+        - { type: integer, format: int64, minimum: 0, maximum: 253402300799999 }
+    SeriesPoint:
+      type: object
+      required: [bucket_start_ms, avg, min, max, last, sample_count, expected_samples, coverage]
+      properties:
+        bucket_start_ms: { type: integer, format: int64 }
+        avg: { type: number }
+        min: { type: number }
+        max: { type: number }
+        last: { type: number }
+        sample_count: { type: integer, format: int64, minimum: 1 }
+        expected_samples: { type: integer, format: int64, minimum: 1 }
+        coverage: { type: number, minimum: 0, maximum: 1 }
+    Series:
+      type: object
+      required: [resource_id, metric_key, unit, resolution_s, from_ms, to_ms, points]
+      properties:
+        resource_id: { $ref: '#/components/schemas/ResourceID' }
+        metric_key: { type: string }
+        unit: { type: string }
+        resolution_s: { type: integer, enum: [30, 300, 3600] }
+        from_ms: { type: integer, format: int64 }
+        to_ms: { type: integer, format: int64 }
+        points:
+          type: array
+          maxItems: 2000
+          items: { $ref: '#/components/schemas/SeriesPoint' }
+    Health:
+      type: object
+      required: [status, db_ok, db_ping_ok, db_bytes, wal_bytes, shm_bytes, rollup_lag_s, collector_error_count, dropped_live_events, active_live_subscribers, wall_clock_jump_count]
+      properties:
+        status: { type: string, enum: [ok, degraded] }
+        db_ok: { type: boolean }
+        db_ping_ok: { type: boolean }
+        db_bytes: { type: integer, format: int64 }
+        wal_bytes: { type: integer, format: int64 }
+        shm_bytes: { type: integer, format: int64 }
+        db_ping_error: { type: string }
+        last_db_error: { type: string }
+        last_collect_at: { type: string, format: date-time }
+        last_write_at: { type: string, format: date-time }
+        rollup_lag_s: { type: integer, format: int64 }
+        collector_error_count: { type: integer, format: int64 }
+        collector_errors_by_name:
+          type: object
+          additionalProperties: { type: integer, format: int64 }
+        dropped_live_events: { type: integer, format: int64 }
+        active_live_subscribers: { type: integer }
+        wall_clock_jump_count: { type: integer, format: int64 }
+        clock_error: { type: string }

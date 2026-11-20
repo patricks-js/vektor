@@ -48,7 +48,7 @@ O desenvolvimento será incremental, priorizando funcionalidades utilizáveis em
 
 | Camada | Tecnologia |
 |---|---|
-| Sistema operacional | Ubuntu Server (inicialmente 24.04 LTS) |
+| Sistema operacional | Ubuntu Server 26.04.1 LTS |
 | Backend | Go |
 | Frontend | React + TypeScript |
 | Persistência | SQLite |
@@ -58,9 +58,7 @@ O desenvolvimento será incremental, priorizando funcionalidades utilizáveis em
 | Virtualização futura | KVM/QEMU + libvirt |
 | Distribuição | Binários nativos + systemd + pacote .deb |
 
-A arquitetura prevista contém um Control Plane responsável por API, autenticação, persistência e interface, e um Host Agent responsável por coleta de métricas e integração controlada com o sistema operacional.
-
-Ambos operam inicialmente na mesma máquina, com comunicação local. Essa separação será validada durante o planejamento técnico.
+O `vektord` é um monólito modular em execução não privilegiada. A v0.1 já reúne coleta e persistência no mesmo processo. A v0.2 expõe esse pipeline por REST autenticado e SSE sob demanda. Integrações privilegiadas futuras poderão usar um componente separado. [Decisão de processo](docs/adr/ADR-001-process-and-sqlite-architecture.md) · [API da v0.2](docs/API_V0.2.md)
 
 ## 5. Primeira fase — Host Monitoring
 
@@ -122,7 +120,7 @@ A intenção não é reproduzir sua arquitetura ou código, mas compreender as d
 7. Medir desempenho e consumo de recursos.
 8. Tratar segurança, persistência e recuperação como requisitos fundamentais.
 
-## 9. Objetivo imediato
+## 9. Referência do planejamento inicial
 
 Investigar tecnicamente o Beszel, com foco inicial no motor de métricas e no gerenciamento de histórico.
 
