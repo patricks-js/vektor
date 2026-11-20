@@ -14,6 +14,7 @@ import (
 	"vektor/internal/history"
 	"vektor/internal/httpapi"
 	"vektor/internal/metrics/scheduler"
+	"vektor/web"
 )
 
 func runDaemon(parent context.Context, cfg config.HTTPConfig, logger *slog.Logger, sched *scheduler.Scheduler,
@@ -29,7 +30,7 @@ func runDaemon(parent context.Context, cfg config.HTTPConfig, logger *slog.Logge
 	}
 	defer listener.Close()
 
-	server := httpapi.New(cfg, queries, sessions, hub).Server(ctx)
+	server := httpapi.New(cfg, queries, sessions, hub).WithUI(web.Handler()).Server(ctx)
 	served := make(chan error, 1)
 	scheduled := make(chan error, 1)
 	go func() {

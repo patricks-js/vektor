@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"path"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -40,6 +41,7 @@ type API struct {
 	auth     *auth.Store
 	hub      *scheduler.LiveHub
 	mux      *http.ServeMux
+	ui       http.Handler
 	requests chan struct{}
 	streams  chan struct{}
 	password chan struct{}
@@ -65,8 +67,18 @@ func New(cfg config.HTTPConfig, queries *history.QueryService, sessions *auth.St
 	a.route(http.MethodPost, logoutPath, true, a.logout)
 	a.route(http.MethodGet, apiPath+"/auth/me", true, a.me)
 	a.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if a.ui != nil && r.URL.Path != "/api" && !strings.HasPrefix(r.URL.Path, "/api/") {
+			a.ui.ServeHTTP(w, r)
+			return
+		}
 		writeError(w, http.StatusNotFound, "not_found", "Endpoint not found")
 	})
+	return a
+}
+
+// WithUI mounts a static dashboard before starting the server.
+func (a *API) WithUI(handler http.Handler) *API {
+	a.ui = handler
 	return a
 }
 
