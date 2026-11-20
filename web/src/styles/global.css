@@ -52,14 +52,16 @@
   --vk-font: "Geist Variable", system-ui, sans-serif;
   --vk-mono: "Geist Mono Variable", ui-monospace, monospace;
 }
-*, *::before, *::after { box-sizing: border-box; }
-body { margin: 0; background: var(--vk-bg); color: var(--vk-text-primary); font: 14px/21px var(--vk-font); }
-h1, h2, h3, p, dl, dd { margin: 0; }
-button, input, select { font: inherit; }
-a { color: inherit; }
-:focus-visible { outline: var(--vk-stroke-2) solid var(--vk-accent); outline-offset: 2px; }
-::selection { background: var(--vk-accent); color: var(--vk-accent-ink); }
-dialog::backdrop { background: rgb(0 0 0 / 70%); }
+@layer reset {
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin: 0; background: var(--vk-bg); color: var(--vk-text-primary); font: 14px/21px var(--vk-font); }
+  h1, h2, h3, p, dl, dd { margin: 0; }
+  button, input, select { font: inherit; }
+  a { color: inherit; }
+  :focus-visible { outline: var(--vk-stroke-2) solid var(--vk-accent); outline-offset: 2px; }
+  ::selection { background: var(--vk-accent); color: var(--vk-accent-ink); }
+  dialog::backdrop { background: rgb(0 0 0 / 70%); }
+}
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }

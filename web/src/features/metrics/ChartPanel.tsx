@@ -18,7 +18,20 @@ const s = stylex.create({
   cursor: { stroke: 'var(--vk-text-secondary)', strokeDasharray: '4 4' },
   text: { fill: 'currentColor' },
   key: { borderBlockStartWidth: 1, borderBlockStartStyle: 'solid', borderBlockStartColor: 'var(--vk-border-subtle)', paddingBlockStart: 12, minHeight: 57 },
-  slider: { width: '100%', accentColor: 'var(--vk-accent)', margin: '0', minHeight: { default: 24, '@media (pointer: coarse)': 44 } },
+  slider: {
+    appearance: { default: 'none', '::-webkit-slider-thumb': 'none' },
+    width: { default: '100%', '::-webkit-slider-thumb': 14, '::-moz-range-thumb': 14 },
+    height: { default: 24, '::-webkit-slider-runnable-track': 4, '::-moz-range-track': 4, '::-webkit-slider-thumb': 14, '::-moz-range-thumb': 14 },
+    minHeight: { default: 24, '@media (pointer: coarse)': 44 },
+    margin: '0', marginBlockStart: { default: 0, '::-webkit-slider-thumb': -5 }, cursor: 'pointer',
+    borderWidth: { default: 0, '::-moz-range-thumb': 0 },
+    borderRadius: { default: 0, '::-webkit-slider-thumb': 0, '::-moz-range-thumb': 0 },
+    backgroundColor: {
+      default: 'transparent',
+      '::-webkit-slider-runnable-track': 'var(--vk-border-control)', '::-moz-range-track': 'var(--vk-border-control)',
+      '::-webkit-slider-thumb': 'var(--vk-accent)', '::-moz-range-thumb': 'var(--vk-accent)',
+    },
+  },
   empty: { display: 'grid', alignContent: 'center', minHeight: 184, borderBlockWidth: 1, borderBlockStyle: 'solid', borderBlockColor: 'var(--vk-border-subtle)' },
   foot: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px 16px', borderBlockStartWidth: 1, borderBlockStartStyle: 'solid', borderBlockStartColor: 'var(--vk-border-subtle)', paddingBlockStart: 12 },
 })

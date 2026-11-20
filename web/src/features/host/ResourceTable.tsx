@@ -13,6 +13,7 @@ const s = stylex.create({
   table: { borderCollapse: 'collapse', minWidth: 460, width: '100%', textAlign: 'start', tableLayout: 'auto' },
   th: { color: 'var(--vk-text-secondary)', fontSize: 12, lineHeight: '16px', backgroundColor: 'var(--vk-surface-2)', textAlign: 'start', padding: '6px 12px', fontWeight: 600 },
   td: { borderBlockStartWidth: 1, borderBlockStartStyle: 'solid', borderBlockStartColor: 'var(--vk-border-subtle)', padding: '10px 12px', minHeight: 44, verticalAlign: 'top', overflowWrap: 'anywhere', maxWidth: 250 },
+  nameCell: { minWidth: 152, textAlign: 'start' },
   rowSelected: { backgroundColor: 'var(--vk-surface-2)' },
   sort: {
     display: 'inline-flex', gap: 6, alignItems: 'center', padding: '2px 0', minHeight: { default: 32, '@media (pointer: coarse)': 44 },
@@ -88,7 +89,7 @@ export function ResourceTable({ kind, title, columns, selected, href, empty }: {
               </tr></thead>
               <tbody>{visible.map(resource => (
                 <tr key={resource.id} {...stylex.props(resource.id === selected && s.rowSelected)}>
-                  <th scope="row" {...stylex.props(s.td)}>
+                  <th scope="row" {...stylex.props(s.td, s.nameCell)}>
                     {href
                       ? <Link {...stylex.props(s.link)} to={href(resource.id)} aria-current={selected === resource.id ? 'true' : undefined}>{displayName(resource)}</Link>
                       : <span>{displayName(resource)}</span>}
