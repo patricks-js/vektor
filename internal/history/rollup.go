@@ -54,47 +54,21 @@ func NewRollupEngine(db *database.DB, cfg config.Config, health *observability.H
 }
 
 const rollupRangeSQL = `
-WITH child AS (
+WITH agg AS (
 	SELECT
 		resource_id,
 		metric_key,
 		(bucket_start_ms - ((bucket_start_ms % ?1 + ?1) % ?1)) AS parent_bucket_ms,
-		bucket_start_ms,
-		sample_count,
-		value_sum,
-		value_min,
-		value_max,
-		value_last,
-		last_sample_ms
-	FROM metric_buckets
-	WHERE resolution_s = ?2
-	  AND bucket_start_ms >= ?3
-	  AND bucket_start_ms < ?4
-),
-agg AS (
-	SELECT
-		resource_id,
-		metric_key,
-		parent_bucket_ms,
 		SUM(sample_count) AS sample_count,
 		SUM(value_sum) AS value_sum,
 		MIN(value_min) AS value_min,
 		MAX(value_max) AS value_max,
 		MAX(last_sample_ms) AS max_last_sample_ms
-	FROM child
+	FROM metric_buckets
+	WHERE resolution_s = ?2
+	  AND bucket_start_ms >= ?3
+	  AND bucket_start_ms < ?4
 	GROUP BY resource_id, metric_key, parent_bucket_ms
-),
-ranked AS (
-	SELECT
-		resource_id,
-		metric_key,
-		parent_bucket_ms,
-		value_last,
-		ROW_NUMBER() OVER (
-			PARTITION BY resource_id, metric_key, parent_bucket_ms
-			ORDER BY last_sample_ms DESC, bucket_start_ms DESC
-		) AS rn
-	FROM child
 )
 INSERT INTO metric_buckets (
 	resource_id, metric_key, resolution_s, bucket_start_ms,
@@ -109,14 +83,20 @@ SELECT
 	a.value_sum,
 	a.value_min,
 	a.value_max,
-	r.value_last,
+	(
+		SELECT c2.value_last
+		FROM metric_buckets c2
+		WHERE c2.resource_id = a.resource_id
+		  AND c2.metric_key = a.metric_key
+		  AND c2.resolution_s = ?2
+		  AND c2.bucket_start_ms >= a.parent_bucket_ms
+		  AND c2.bucket_start_ms < a.parent_bucket_ms + ?1
+		ORDER BY c2.last_sample_ms DESC, c2.bucket_start_ms DESC
+		LIMIT 1
+	),
 	a.max_last_sample_ms
 FROM agg a
-JOIN ranked r
-  ON r.resource_id = a.resource_id
- AND r.metric_key = a.metric_key
- AND r.parent_bucket_ms = a.parent_bucket_ms
- AND r.rn = 1
+WHERE 1
 ON CONFLICT(resource_id, metric_key, resolution_s, bucket_start_ms)
 DO UPDATE SET
 	sample_count = excluded.sample_count,
