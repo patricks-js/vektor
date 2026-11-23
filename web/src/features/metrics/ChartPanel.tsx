@@ -7,9 +7,10 @@ import type { Series, Step } from '../../lib/api/client'
 import { useChartCursor } from './cursor'
 import { axisTime, dateTime, duration, formatValue } from './format'
 import { useTimeRange } from './range'
-import { areaPath, bucketAt, historyCoverage, plotPath, useHistory } from './series'
+import { areaPath, bucketAt, historyCoverage, niceCeiling, plotPath, useHistory } from './series'
 
 type SeriesColor = 'cpu' | 'memory' | 'storage' | 'disk-io' | 'rx' | 'tx' | 'sensor'
+type ScaleMode = 'auto' | 'full'
 
 const s = stylex.create({
   stage: { position: 'relative', minHeight: 196, minWidth: 0 },
@@ -63,7 +64,7 @@ const top = 12
 const bottom = h - 26
 const coveragePercent = new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 1 })
 
-function Chart({ series, color, title }: { series: Series; color: SeriesColor; title: string }) {
+function Chart({ series, color, title, scale }: { series: Series; color: SeriesColor; title: string; scale: ScaleMode }) {
   const element = useRef<HTMLDivElement>(null)
   const gradId = useId()
   const [width, setWidth] = useState(340)
@@ -84,7 +85,10 @@ function Chart({ series, color, title }: { series: Series; color: SeriesColor; t
   const geometry = useMemo(() => {
     const values = series.points.map(point => point.avg)
     const min = Math.min(0, ...values)
-    const max = series.unit === '%' ? Math.max(100, ...values) : Math.max(1, ...values)
+    const peak = values.length ? Math.max(...values) : 0
+    const max = scale === 'full' && series.unit === '%'
+      ? Math.max(100, peak)
+      : niceCeiling(peak, series.unit, series.unit === '%' ? 100 : undefined)
     const x = (ts: number) => left + (ts - start) / span * (right - left)
     const y = (value: number) => bottom - (value - min) / (max - min) * (bottom - top)
     const marks = series.points.filter((point, index, points) =>
@@ -96,7 +100,7 @@ function Chart({ series, color, title }: { series: Series; color: SeriesColor; t
       area: areaPath(series, x, y, bottom),
       marks,
     }
-  }, [series, left, right, start, span, step])
+  }, [series, left, right, start, span, step, scale])
   const ticks = width < 430 ? [0, 0.5, 1] : [0, 0.25, 0.5, 0.75, 1]
   const cursor = time !== undefined && time >= start && time < series.to_ms ? time : undefined
   const point = cursor === undefined ? undefined : bucketAt(series, cursor)
@@ -185,13 +189,14 @@ function Chart({ series, color, title }: { series: Series; color: SeriesColor; t
   )
 }
 
-export function ChartPanel({ title, subtitle, resourceId, metric, color = 'cpu', resourcePending }: {
+export function ChartPanel({ title, subtitle, resourceId, metric, color = 'cpu', scale = 'auto', resourcePending }: {
   title: string
   subtitle?: string
   resourceId?: string
   resourcePending?: boolean
   metric: string
   color?: SeriesColor
+  scale?: ScaleMode
 }) {
   const { range } = useTimeRange()
   const key = typeof range === 'string' ? range : `${range.from}/${range.to}`
@@ -202,7 +207,7 @@ export function ChartPanel({ title, subtitle, resourceId, metric, color = 'cpu',
 
   return (
     <Panel title={title} subtitle={subtitle} action={<Source>Histórico</Source>}>
-      {query.data?.points.length ? <Chart series={query.data} title={title} color={color} /> : (
+      {query.data?.points.length ? <Chart series={query.data} title={title} color={color} scale={scale} /> : (
         <div {...stylex.props(s.empty, layout.stack)}>
           {!resourceId ? (resourcePending ? <Loading label="Aguardando inventário…" /> : <Empty>Inventário indisponível para consultar esta série.</Empty>)
             : query.isPending ? <Loading label="Consultando histórico…" />

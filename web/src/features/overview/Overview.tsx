@@ -7,6 +7,7 @@ import { useHealth, useHost, useResources } from '../../lib/api/queries'
 import type { ResourceKind } from '../../lib/api/client'
 import { displayName, metadataText } from '../host/resourceMetadata'
 import { ChartPanel } from '../metrics/ChartPanel'
+import { TemperatureChartPanel } from '../metrics/TemperatureChartPanel'
 import { metric } from '../metrics/catalog'
 import { ChartCursorProvider } from '../metrics/cursor'
 import { dateTime, duration } from '../metrics/format'
@@ -181,9 +182,11 @@ function Diagnostics() {
 export function Overview() {
   const host = useHost()
   const filesystems = useResources('filesystem')
+  const sensors = useResources('sensor')
   const { singleColumn } = usePreferences()
   const id = host.data?.resource.id
   const root = filesystems.data?.find(resource => resource.active && metadataText(resource, 'mountpoint') === '/')
+  const activeSensors = sensors.data?.filter(sensor => sensor.active) ?? []
   return (
     <div {...stylex.props(layout.page)}>
       <HostSummary />
@@ -207,8 +210,9 @@ export function Overview() {
         <ChartCursorProvider>
           <div {...stylex.props(singleColumn ? layout.grid1 : layout.grid2)}>
             <ChartPanel title="Utilização da CPU" subtitle="Utilização média do processador no host" resourceId={id} resourcePending={host.isPending} metric={metric.cpu} color="cpu" />
-            <ChartPanel title="Uso de memória" subtitle="Percentual de RAM alocada no intervalo" resourceId={id} resourcePending={host.isPending} metric={metric.ram} color="memory" />
+            <ChartPanel title="Uso de memória" subtitle="Percentual de RAM alocada no intervalo" resourceId={id} resourcePending={host.isPending} metric={metric.ram} color="memory" scale="full" />
           </div>
+          {activeSensors.length > 0 && <TemperatureChartPanel sensors={activeSensors} />}
         </ChartCursorProvider>
       </section>
       <div {...stylex.props(layout.grid2)}><ResourceSummary kind="filesystem" /><ResourceSummary kind="nic" /></div>

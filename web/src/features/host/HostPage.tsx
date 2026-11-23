@@ -10,8 +10,9 @@ import { Facts, MetricCard, PageHeading } from '../../components/ui/dashboard'
 import { Button, Empty, ErrorState, Loading, Panel, layout } from '../../components/ui/ui'
 import type { Host, Resource, ResourceKind } from '../../lib/api/client'
 import { useLiveReading } from '../../lib/realtime/hooks'
-import { useApi, useHost } from '../../lib/api/queries'
+import { useApi, useHost, useResources } from '../../lib/api/queries'
 import { ChartPanel } from '../metrics/ChartPanel'
+import { TemperatureChartPanel } from '../metrics/TemperatureChartPanel'
 import { metric } from '../metrics/catalog'
 import { ChartCursorProvider } from '../metrics/cursor'
 import { dateTime } from '../metrics/format'
@@ -132,8 +133,8 @@ function MemoryView({ host, singleColumn }: { host?: Host; singleColumn: boolean
       ]} />
     </Panel>
     <div {...stylex.props(singleColumn ? layout.grid1 : layout.grid2)}>
-      <ChartPanel title="Uso de memória" subtitle="Percentual de RAM utilizada" resourceId={id} metric={metric.ram} color="memory" />
-      <ChartPanel title="Uso de swap" subtitle="Percentual de swap utilizada" resourceId={id} metric={metric.swap} color="memory" />
+      <ChartPanel title="Uso de memória" subtitle="Percentual de RAM utilizada" resourceId={id} metric={metric.ram} color="memory" scale="full" />
+      <ChartPanel title="Uso de swap" subtitle="Percentual de swap utilizada" resourceId={id} metric={metric.swap} color="memory" scale="full" />
     </div>
   </>
 }
@@ -168,7 +169,7 @@ function ResourceDetails({ id, allowed, singleColumn }: { id: string; allowed: R
       ]} />
       {resource.kind === 'sensor' && <Facts items={sensorColumns.slice(-1).map(column => [column.label, column.cell(resource)])} />}
     </Panel>
-    {resource.kind === 'filesystem' && <ChartPanel title="Utilização da montagem" subtitle="Espaço ocupado na partição" resourceId={id} metric={metric.fs} color="storage" />}
+    {resource.kind === 'filesystem' && <ChartPanel title="Utilização da montagem" subtitle="Espaço ocupado na partição" resourceId={id} metric={metric.fs} color="storage" scale="full" />}
     {resource.kind === 'disk' && <div {...stylex.props(singleColumn ? layout.grid1 : layout.grid2)}>
       <ChartPanel title="Leitura por segundo" subtitle="Throughput de leitura do bloco" resourceId={id} metric={metric.diskRead} color="disk-io" />
       <ChartPanel title="Escrita por segundo" subtitle="Throughput de escrita do bloco" resourceId={id} metric={metric.diskWrite} color="tx" />
@@ -179,6 +180,13 @@ function ResourceDetails({ id, allowed, singleColumn }: { id: string; allowed: R
     </div>}
     {resource.kind === 'sensor' && <ChartPanel title="Histórico de temperatura" subtitle="Leituras térmicas do canal" resourceId={id} metric={metric.temperature} color="sensor" />}
   </>
+}
+
+function SensorsOverviewChart() {
+  const sensors = useResources('sensor')
+  const active = sensors.data?.filter(sensor => sensor.active) ?? []
+  if (active.length === 0) return null
+  return <TemperatureChartPanel sensors={active} />
 }
 
 function HostResources({ tab, host, singleColumn }: { tab: Exclude<HostTab, 'cpu' | 'memory'>; host?: Host; singleColumn: boolean }) {
@@ -208,6 +216,7 @@ function HostResources({ tab, host, singleColumn }: { tab: Exclude<HostTab, 'cpu
       <ChartPanel title="Histórico de recepção do host" subtitle="Volume recebido agregado" resourceId={host?.resource.id} metric={metric.rx} color="rx" />
       <ChartPanel title="Histórico de transmissão do host" subtitle="Volume enviado agregado" resourceId={host?.resource.id} metric={metric.tx} color="tx" />
     </div>}
+    {!selected && tab === 'sensors' && <SensorsOverviewChart />}
     {!selected && tab !== 'network' && <p {...stylex.props(layout.small)}>Selecione um recurso na tabela para abrir seu histórico.</p>}
     {tab === 'storage' && <>
       <ResourceTable kind="filesystem" title="Capacidade dos sistemas de arquivos" columns={fsColumns} selected={selected} href={url} />

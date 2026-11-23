@@ -1,0 +1,41 @@
+[Unit]
+Description=Vektor Linux Host Monitoring Daemon
+Documentation=https://github.com/patricklino/vektor
+After=network-online.target local-fs.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vektor
+Group=vektor
+EnvironmentFile=-/etc/vektor/vektord.env
+ExecStart=/usr/bin/vektord --data-dir /var/lib/vektor
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=15s
+
+# Directory & state management
+StateDirectory=vektor
+StateDirectoryMode=0750
+WorkingDirectory=/var/lib/vektor
+
+# Hardening (unprivileged monitoring daemon)
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+ReadWritePaths=/var/lib/vektor
+
+[Install]
+WantedBy=multi-user.target

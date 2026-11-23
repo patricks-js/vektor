@@ -20,7 +20,29 @@ Run the daemon and bootstrap as the owner of the data directory. Bootstrap creat
 
 ## Frontend development
 
-Run the daemon on loopback, then run `bun run --cwd web dev` and open the URL printed by Vite. The dev server proxies `/api/v1` to `http://127.0.0.1:8080`. Set `VEKTOR_DEV_API` to change the target. A build without `-tags webui` provides the API by itself and can run before the frontend has been built. [Design system catalog](docs/WEB_DESIGN_SYSTEM.md)
+Run the daemon on loopback, then run `bun run --cwd web dev` and open the URL printed by Vite. The dev server proxies `/api/v1` to `http://127.0.0.1:8080`. Set `VEKTOR_DEV_API` to change the target. To preview the UI without running the daemon, use the standalone mock demo:
+
+```bash
+bun run --cwd web dev:demo
+```
+
+A build without `-tags webui` provides the API by itself and can run before the frontend has been built. [Design system catalog](docs/WEB_DESIGN_SYSTEM.md)
+
+## Native Linux installation (`systemd` & `.deb`)
+
+Install as an unprivileged `systemd` service (`vektor` user, state in `/var/lib/vektor`, env file in `/etc/vektor/vektord.env`):
+
+```bash
+sudo ./packaging/install.sh ./bin/vektord
+sudo -u vektor /usr/bin/vektord bootstrap-admin --data-dir /var/lib/vektor
+sudo systemctl enable --now vektord
+```
+
+To build a Debian/Ubuntu `.deb` package on a Debian-based host:
+
+```bash
+./packaging/build-deb.sh 0.4.0
+```
 
 ```bash
 bun run --cwd web typecheck

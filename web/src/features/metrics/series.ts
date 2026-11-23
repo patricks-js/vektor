@@ -76,3 +76,42 @@ export function historyCoverage(series: Series) {
   const gaps = Math.max(0, Math.ceil((series.to_ms - from) / step) - series.points.length)
   return { low: Math.min(...coverage), high: Math.max(...coverage), gaps }
 }
+
+const percentSteps = [4, 8, 12, 16, 20, 28, 36, 40, 48, 60, 80, 100]
+const binarySteps = [1, 2, 4, 8, 12, 16, 20, 24, 32, 40, 48, 64, 80, 100, 128, 160, 200, 256, 320, 400, 512, 640, 800, 1024]
+const genericSteps = [1, 1.2, 1.6, 2, 2.4, 3.2, 4, 4.8, 6, 8, 10]
+
+export function niceCeiling(peak: number, unit: string, cap?: number): number {
+  const clampCap = (value: number) => cap !== undefined ? Math.min(cap, value) : value
+
+  if (unit === '%') {
+    if (peak <= 0) return 4
+    const target = peak * 1.15
+    const step = percentSteps.find(candidate => candidate >= target) ?? 100
+    return clampCap(step)
+  }
+
+  if (unit === '°C') {
+    if (peak <= 0) return 40
+    const target = peak * 1.15
+    const step = Math.ceil(target / 20) * 20
+    return clampCap(Math.max(40, step))
+  }
+
+  if (unit === 'bytes' || unit === 'bytes/s') {
+    if (peak <= 0) return 1024
+    const target = peak * 1.15
+    const level = Math.max(0, Math.floor(Math.log2(target) / 10))
+    const scale = 1024 ** level
+    const normalized = target / scale
+    const step = binarySteps.find(candidate => candidate >= normalized) ?? Math.ceil(normalized / 4) * 4
+    return clampCap(step * scale)
+  }
+
+  if (peak <= 0) return 1
+  const target = peak * 1.15
+  const mag = 10 ** Math.floor(Math.log10(target))
+  const normalized = target / mag
+  const step = genericSteps.find(candidate => candidate >= normalized) ?? 10
+  return clampCap(Number((step * mag).toPrecision(4)))
+}

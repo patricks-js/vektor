@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"vektor/internal/alerts"
 	"vektor/internal/auth"
 	"vektor/internal/config"
 	"vektor/internal/database"
@@ -26,6 +27,8 @@ import (
 	"vektor/internal/metrics/tracker"
 	"vektor/internal/observability"
 )
+
+var version = "dev"
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -50,6 +53,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 
 	logLevelStr := envOrDefault("VEKTOR_LOG_LEVEL", "info")
 	var checkMode bool
+	var showVersion bool
 
 	fs := flag.NewFlagSet("vektord", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -65,6 +69,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	fs.IntVar(&cfg.HTTP.MaxLiveClients, "max-live-clients", cfg.HTTP.MaxLiveClients, "Maximum SSE subscribers (env VEKTOR_MAX_LIVE_CLIENTS)")
 	fs.StringVar(&logLevelStr, "log-level", logLevelStr, "Structured log level: debug, info, warn, error (env VEKTOR_LOG_LEVEL)")
 	fs.BoolVar(&checkMode, "check", false, "Run discovery + single collection/write cycle, print JSON status, and exit")
+	fs.BoolVar(&showVersion, "version", false, "Print vektord version and exit")
 	fs.Usage = func() {
 		fmt.Fprintln(stderr, "Usage: vektord [bootstrap-admin | revoke-sessions] [flags]")
 		fs.PrintDefaults()
@@ -74,6 +79,10 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			return nil
 		}
 		return err
+	}
+	if showVersion {
+		fmt.Fprintf(stdout, "vektord %s\n", version)
+		return nil
 	}
 	if fs.NArg() > 0 || (command != "" && checkMode) {
 		return errors.New("invalid arguments; see --help")
@@ -199,7 +208,11 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		slog.Duration("discovery_interval", cfg.DiscoveryInterval),
 	)
 
-	return runDaemon(ctx, cfg.HTTP, logger, sched, qs, sessions, hub)
+	alertStore := alerts.NewStore(db)
+	alertNotifier := alerts.NewNotifier()
+	alertEval := alerts.NewEvaluator(alertStore, alertNotifier, logger)
+
+	return runDaemon(ctx, cfg.HTTP, logger, sched, qs, sessions, hub, alertStore, alertNotifier, alertEval)
 }
 
 func applyHTTPEnv(cfg *config.HTTPConfig) error {

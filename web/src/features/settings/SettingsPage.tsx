@@ -1,5 +1,5 @@
 import * as stylex from '@stylexjs/stylex'
-import { FileText, LogOut, SlidersHorizontal, UserRound } from 'lucide-react'
+import { Bell, FileText, LogOut, Send, SlidersHorizontal, UserRound } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { isRange, isTheme, ranges, usePreferences } from '../../app/preferences'
 import { Facts } from '../../components/ui/dashboard'
@@ -7,6 +7,7 @@ import { Button, ErrorState, Modal, SelectField, layout } from '../../components
 import { dateTime } from '../metrics/format'
 import { useSession } from '../auth/session'
 import fontLicenses from '../../styles/geist-license.txt?url'
+import { AlertsSection, NotificationsSection } from './AlertsSettings'
 
 const s = stylex.create({
   card: {
@@ -56,6 +57,8 @@ const s = stylex.create({
 
 const sections = [
   { id: 'geral', label: 'Geral', icon: SlidersHorizontal },
+  { id: 'alertas', label: 'Alertas', icon: Bell },
+  { id: 'notificacoes', label: 'Notificações', icon: Send },
   { id: 'sessao', label: 'Sessão', icon: UserRound },
   { id: 'sobre', label: 'Sobre', icon: FileText },
 ] as const
@@ -134,6 +137,22 @@ export function SettingsPage() {
                 Exibir gráficos em coluna única
               </label>
               <p role="status" {...stylex.props(layout.small, s.feedback)}>{feedback}</p>
+            </section>
+
+            <section id="alertas" aria-labelledby="settings-alerts" {...stylex.props(s.section)}>
+              <div {...stylex.props(s.sectionHead)}>
+                <h2 id="settings-alerts" {...stylex.props(layout.sectionTitle)}>Alertas</h2>
+                <p {...stylex.props(layout.small)}>Defina limites para CPU, memória, disco e temperatura.</p>
+              </div>
+              <AlertsSection />
+            </section>
+
+            <section id="notificacoes" aria-labelledby="settings-notifications" {...stylex.props(s.section)}>
+              <div {...stylex.props(s.sectionHead)}>
+                <h2 id="settings-notifications" {...stylex.props(layout.sectionTitle)}>Notificações</h2>
+                <p {...stylex.props(layout.small)}>Envie alertas via Webhook HTTP (POST JSON) para seus canais.</p>
+              </div>
+              <NotificationsSection />
             </section>
 
             <section id="sessao" aria-labelledby="settings-session" {...stylex.props(s.section)}>

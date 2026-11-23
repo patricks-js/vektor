@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Series } from '../../lib/api/client'
-import { areaPath, bucketAt, historyCoverage, plotPath } from './series'
+import { areaPath, bucketAt, historyCoverage, niceCeiling, plotPath } from './series'
 import { formatValue } from './format'
 
 const series: Series = {
@@ -30,5 +30,14 @@ describe('historical buckets', () => {
     expect(formatValue(1024 ** 3, 'bytes')).toBe('1 GiB')
     expect(formatValue(1024 ** 2, 'bytes/s')).toBe('1 MiB/s')
     expect(formatValue(0, '°C')).toBe('0 °C')
+  })
+
+  it('computes dynamic Y-axis ceilings with headroom', () => {
+    expect(niceCeiling(6.7, '%', 100)).toBe(8)
+    expect(niceCeiling(0, '%', 100)).toBe(4)
+    expect(niceCeiling(95, '%', 100)).toBe(100)
+    expect(niceCeiling(55, '°C')).toBe(80)
+    expect(niceCeiling(1.5, 'load')).toBe(2)
+    expect(niceCeiling(6 * 1024 ** 2, 'bytes/s')).toBe(8 * 1024 ** 2)
   })
 })

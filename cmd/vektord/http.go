@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"vektor/internal/alerts"
 	"vektor/internal/auth"
 	"vektor/internal/config"
 	"vektor/internal/history"
@@ -18,7 +19,8 @@ import (
 )
 
 func runDaemon(parent context.Context, cfg config.HTTPConfig, logger *slog.Logger, sched *scheduler.Scheduler,
-	queries *history.QueryService, sessions *auth.Store, hub *scheduler.LiveHub) error {
+	queries *history.QueryService, sessions *auth.Store, hub *scheduler.LiveHub,
+	alertStore *alerts.Store, alertNotifier *alerts.Notifier, alertEval *alerts.Evaluator) error {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", cfg.ListenAddr)
@@ -30,9 +32,13 @@ func runDaemon(parent context.Context, cfg config.HTTPConfig, logger *slog.Logge
 	}
 	defer listener.Close()
 
-	server := httpapi.New(cfg, queries, sessions, hub).WithUI(web.Handler()).Server(ctx)
+	server := httpapi.New(cfg, queries, sessions, hub).
+		WithAlerts(alertStore, alertNotifier).
+		WithUI(web.Handler()).
+		Server(ctx)
 	served := make(chan error, 1)
 	scheduled := make(chan error, 1)
+	evaluated := make(chan error, 1)
 	go func() {
 		if cfg.TLSCert != "" {
 			served <- server.ServeTLS(listener, cfg.TLSCert, cfg.TLSKey)
@@ -41,6 +47,13 @@ func runDaemon(parent context.Context, cfg config.HTTPConfig, logger *slog.Logge
 		}
 	}()
 	go func() { scheduled <- sched.Run(ctx) }()
+	go func() {
+		if alertEval != nil {
+			evaluated <- alertEval.Run(ctx)
+		} else {
+			evaluated <- nil
+		}
+	}()
 	logger.Info("HTTP listener bound", slog.String("address", listener.Addr().String()), slog.Bool("tls", cfg.TLSCert != ""))
 
 	var serveErr error
@@ -60,6 +73,7 @@ func runDaemon(parent context.Context, cfg config.HTTPConfig, logger *slog.Logge
 	if served != nil {
 		serveErr = <-served
 	}
+	<-evaluated
 	if err := <-scheduled; err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}

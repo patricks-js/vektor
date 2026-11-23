@@ -1,5 +1,5 @@
 import { ApiError } from '../api/client'
-import type { Api, Health, Host, Resource, ResourceKind, Series, SeriesPoint, Session, Step } from '../api/client'
+import type { AlertChannel, AlertEvent, AlertRule, Api, Health, Host, Resource, ResourceKind, Series, SeriesPoint, Session, Step } from '../api/client'
 import type { LiveStore, TransportState } from '../realtime/store'
 import type { LivePoint } from '../realtime/stream'
 import { metric } from '../../features/metrics/catalog'
@@ -13,6 +13,29 @@ const KiB = 1024
 let demoLoggedIn = true
 let bootStartedAt = 0
 let cachedResources: Resource[] | undefined
+let demoRules: AlertRule[] | undefined
+let demoChannels: AlertChannel[] | undefined
+let demoEvents: AlertEvent[] | undefined
+let nextAlertId = 10
+
+function getDemoAlertState() {
+  if (!demoRules) {
+    const now = Date.now()
+    demoRules = [
+      { id: 1, name: 'CPU acima de 85%', resource_id: 'host:local', metric_key: metric.cpu, operator: 'gt', threshold: 85, duration_seconds: 120, enabled: true, created_at_ms: now - 86_400_000, updated_at_ms: now - 86_400_000 },
+      { id: 2, name: 'RAM acima de 90%', resource_id: 'host:local', metric_key: metric.ram, operator: 'gt', threshold: 90, duration_seconds: 60, enabled: true, created_at_ms: now - 86_400_000, updated_at_ms: now - 86_400_000 },
+      { id: 3, name: 'Temperatura CPU > 78°C', resource_id: 'sensor:k10temp-tctl', metric_key: metric.temperature, operator: 'gt', threshold: 78, duration_seconds: 60, enabled: false, created_at_ms: now - 43_200_000, updated_at_ms: now - 43_200_000 },
+    ]
+    demoChannels = [
+      { id: 1, name: 'Webhook Homelab', kind: 'webhook', url: 'https://hooks.example.com/vektor', enabled: true, created_at_ms: now - 86_400_000 },
+    ]
+    demoEvents = [
+      { id: 2, rule_id: 1, rule_name: 'CPU acima de 85%', resource_id: 'host:local', metric_key: metric.cpu, status: 'resolved', value: 41.2, threshold: 85, triggered_at_ms: now - 7_200_000, resolved_at_ms: now - 6_900_000 },
+      { id: 1, rule_id: 1, rule_name: 'CPU acima de 85%', resource_id: 'host:local', metric_key: metric.cpu, status: 'firing', value: 88.4, threshold: 85, triggered_at_ms: now - 7_200_000 },
+    ]
+  }
+  return { rules: demoRules, channels: demoChannels!, events: demoEvents! }
+}
 
 function getBootStartedAt() {
   bootStartedAt ||= Date.now() - (42 * 86_400 + 7 * 3600 + 18 * 60) * 1000
@@ -347,6 +370,74 @@ export function createDemoApi(onUnauthorized?: () => void): Api {
       checkAbort(signal)
       requireSession()
       return buildSeries(id, key, from, to, step)
+    },
+    async alertRules(signal) {
+      checkAbort(signal)
+      requireSession()
+      return [...getDemoAlertState().rules]
+    },
+    async createAlertRule(_session, input, signal) {
+      checkAbort(signal)
+      requireSession()
+      const now = Date.now()
+      const rule: AlertRule = { ...input, id: nextAlertId++, created_at_ms: now, updated_at_ms: now }
+      getDemoAlertState().rules.push(rule)
+      return rule
+    },
+    async updateAlertRule(_session, id, input, signal) {
+      checkAbort(signal)
+      requireSession()
+      const state = getDemoAlertState()
+      const idx = state.rules.findIndex(r => r.id === id)
+      if (idx === -1) throw new ApiError(404, 'not_found')
+      const updated: AlertRule = { ...state.rules[idx], ...input, id, updated_at_ms: Date.now() }
+      state.rules[idx] = updated
+      return updated
+    },
+    async deleteAlertRule(_session, id, signal) {
+      checkAbort(signal)
+      requireSession()
+      const state = getDemoAlertState()
+      state.rules = state.rules.filter(r => r.id !== id)
+      demoRules = state.rules
+      return { ok: true as const }
+    },
+    async alertChannels(signal) {
+      checkAbort(signal)
+      requireSession()
+      return [...getDemoAlertState().channels]
+    },
+    async createAlertChannel(_session, input, signal) {
+      checkAbort(signal)
+      requireSession()
+      const ch: AlertChannel = {
+        id: nextAlertId++,
+        name: input.name,
+        kind: 'webhook',
+        url: input.url,
+        enabled: input.enabled,
+        created_at_ms: Date.now(),
+      }
+      getDemoAlertState().channels.push(ch)
+      return ch
+    },
+    async deleteAlertChannel(_session, id, signal) {
+      checkAbort(signal)
+      requireSession()
+      const state = getDemoAlertState()
+      state.channels = state.channels.filter(c => c.id !== id)
+      demoChannels = state.channels
+      return { ok: true as const }
+    },
+    async testAlertChannel(_session, _url, signal) {
+      checkAbort(signal)
+      requireSession()
+      return { ok: true as const }
+    },
+    async alertEvents(signal) {
+      checkAbort(signal)
+      requireSession()
+      return [...getDemoAlertState().events]
     },
   }
 }

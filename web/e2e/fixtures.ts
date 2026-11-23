@@ -71,6 +71,9 @@ export async function fixture(page: Page, options: {
       const record = visible.find(resource => resource.id === id)
       return record ? route.fulfill({ json: record }) : route.fulfill({ status: 404, json: { code: 'resource_not_found', message: 'missing' } })
     }
+    if (path === 'alerts/rules') return route.fulfill({ json: { rules: [] } })
+    if (path === 'alerts/channels') return route.fulfill({ json: { channels: [] } })
+    if (path === 'alerts/events') return route.fulfill({ json: { events: [] } })
     if (path === 'metrics') {
       const metric_key = url.searchParams.get('metric')!
       const resource_id = url.searchParams.get('resource_id')!

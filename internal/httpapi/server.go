@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"vektor/internal/alerts"
 	"vektor/internal/auth"
 	"vektor/internal/config"
 	"vektor/internal/database"
@@ -39,6 +40,8 @@ type API struct {
 	local    bool
 	queries  *history.QueryService
 	auth     *auth.Store
+	alerts   *alerts.Store
+	notifier *alerts.Notifier
 	hub      *scheduler.LiveHub
 	mux      *http.ServeMux
 	ui       http.Handler
@@ -66,6 +69,23 @@ func New(cfg config.HTTPConfig, queries *history.QueryService, sessions *auth.St
 	a.route(http.MethodPost, loginPath, false, a.login)
 	a.route(http.MethodPost, logoutPath, true, a.logout)
 	a.route(http.MethodGet, apiPath+"/auth/me", true, a.me)
+	a.routeMethods(apiPath+"/alerts/rules", true, map[string]http.HandlerFunc{
+		http.MethodGet:  a.listAlertRules,
+		http.MethodPost: a.createAlertRule,
+	})
+	a.routeMethods(apiPath+"/alerts/rules/{id}", true, map[string]http.HandlerFunc{
+		http.MethodPut:    a.updateAlertRule,
+		http.MethodDelete: a.deleteAlertRule,
+	})
+	a.routeMethods(apiPath+"/alerts/channels", true, map[string]http.HandlerFunc{
+		http.MethodGet:  a.listAlertChannels,
+		http.MethodPost: a.createAlertChannel,
+	})
+	a.routeMethods(apiPath+"/alerts/channels/{id}", true, map[string]http.HandlerFunc{
+		http.MethodDelete: a.deleteAlertChannel,
+	})
+	a.route(http.MethodPost, apiPath+"/alerts/channels/test", true, a.testAlertChannel)
+	a.route(http.MethodGet, apiPath+"/alerts/events", true, a.listAlertEvents)
 	a.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if a.ui != nil && r.URL.Path != "/api" && !strings.HasPrefix(r.URL.Path, "/api/") {
 			a.ui.ServeHTTP(w, r)
@@ -79,6 +99,13 @@ func New(cfg config.HTTPConfig, queries *history.QueryService, sessions *auth.St
 // WithUI mounts a static dashboard before starting the server.
 func (a *API) WithUI(handler http.Handler) *API {
 	a.ui = handler
+	return a
+}
+
+// WithAlerts attaches the alert store and webhook notifier.
+func (a *API) WithAlerts(store *alerts.Store, notifier *alerts.Notifier) *API {
+	a.alerts = store
+	a.notifier = notifier
 	return a
 }
 
@@ -147,19 +174,32 @@ type identity struct {
 }
 
 func (a *API) route(method, path string, private bool, handle http.HandlerFunc) {
-	a.mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
-		isStream := path == streamPath && r.Method == method
-		if r.Method != method {
-			w.Header().Set("Allow", method)
+	a.routeMethods(path, private, map[string]http.HandlerFunc{method: handle})
+}
+
+func (a *API) routeMethods(routePath string, private bool, handlers map[string]http.HandlerFunc) {
+	allowed := make([]string, 0, len(handlers))
+	for m := range handlers {
+		allowed = append(allowed, m)
+	}
+	allowHeader := strings.Join(allowed, ", ")
+
+	a.mux.HandleFunc(routePath, func(w http.ResponseWriter, r *http.Request) {
+		handle, ok := handlers[r.Method]
+		if !ok {
+			w.Header().Set("Allow", allowHeader)
 			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
 			return
 		}
-		if len(r.URL.RawQuery) > 2048 || (path != loginPath && r.ContentLength != 0) {
+		isStream := routePath == streamPath && r.Method == http.MethodGet
+		acceptsBody := (r.Method == http.MethodPost || r.Method == http.MethodPut) && routePath != logoutPath
+		if len(r.URL.RawQuery) > 2048 || (!acceptsBody && r.ContentLength != 0) {
 			w.Header().Set("Connection", "close")
 			writeError(w, http.StatusBadRequest, "invalid_request", "Unexpected body or oversized query")
 			return
 		}
-		if method == http.MethodPost && !a.validOrigin(r) {
+		isMutation := r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodDelete
+		if isMutation && !a.validOrigin(r) {
 			closeWithUnreadBody(w, r)
 			writeError(w, http.StatusForbidden, "origin_denied", "Origin is not allowed")
 			return

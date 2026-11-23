@@ -11,6 +11,59 @@ export type Series = Schemas['Series']
 export type SeriesPoint = Schemas['SeriesPoint']
 export type Step = NonNullable<paths['/api/v1/metrics']['get']['parameters']['query']['step']>
 
+export type AlertRule = {
+  id: number
+  name: string
+  resource_id: string
+  metric_key: string
+  operator: 'gt' | 'lt'
+  threshold: number
+  duration_seconds: number
+  enabled: boolean
+  created_at_ms: number
+  updated_at_ms: number
+}
+
+export type AlertRuleInput = {
+  name: string
+  resource_id: string
+  metric_key: string
+  operator: 'gt' | 'lt'
+  threshold: number
+  duration_seconds: number
+  enabled: boolean
+}
+
+export type AlertChannel = {
+  id: number
+  name: string
+  kind: 'webhook'
+  url: string
+  enabled: boolean
+  created_at_ms: number
+}
+
+export type AlertChannelInput = {
+  name: string
+  kind?: 'webhook'
+  url: string
+  enabled: boolean
+}
+
+export type AlertEvent = {
+  id: number
+  rule_id: number
+  rule_name: string
+  resource_id: string
+  metric_key: string
+  status: 'firing' | 'resolved'
+  value: number
+  threshold: number
+  triggered_at_ms: number
+  resolved_at_ms?: number
+  notify_error?: string
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -57,7 +110,7 @@ function requestSlots() {
 export function createApi(onUnauthorized?: () => void) {
   const schedule = requestSlots()
 
-  async function send<T>(path: ApiPaths | `/api/v1/resources/${string}`, init?: RequestInit, params?: Record<string, string>) {
+  async function send<T>(path: ApiPaths | `/api/v1/resources/${string}` | `/api/v1/alerts/${string}`, init?: RequestInit, params?: Record<string, string>) {
     const url = params ? `${path}?${new URLSearchParams(params)}` : path
     let response: Response
     try {
@@ -78,7 +131,7 @@ export function createApi(onUnauthorized?: () => void) {
     return response.json() as Promise<T>
   }
 
-  function request<T>(path: ApiPaths | `/api/v1/resources/${string}`, init?: RequestInit, params?: Record<string, string>) {
+  function request<T>(path: ApiPaths | `/api/v1/resources/${string}` | `/api/v1/alerts/${string}`, init?: RequestInit, params?: Record<string, string>) {
     return schedule(init?.signal, () => send<T>(path, init, params))
   }
 
@@ -117,6 +170,37 @@ export function createApi(onUnauthorized?: () => void) {
       request<Series>('/api/v1/metrics', { signal }, {
         resource_id: id, metric, from: String(from), to: String(to), step, max_points: '600',
       }),
+    alertRules: async (signal: AbortSignal) => (await request<{ rules: AlertRule[] }>('/api/v1/alerts/rules', { signal })).rules,
+    createAlertRule: (session: Session, input: AlertRuleInput, signal?: AbortSignal) =>
+      request<AlertRule>('/api/v1/alerts/rules', {
+        method: 'POST', signal, body: JSON.stringify(input),
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': session.csrf_token },
+      }),
+    updateAlertRule: (session: Session, id: number, input: AlertRuleInput, signal?: AbortSignal) =>
+      request<AlertRule>(`/api/v1/alerts/rules/${id}`, {
+        method: 'PUT', signal, body: JSON.stringify(input),
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': session.csrf_token },
+      }),
+    deleteAlertRule: (session: Session, id: number, signal?: AbortSignal) =>
+      request<{ ok: true }>(`/api/v1/alerts/rules/${id}`, {
+        method: 'DELETE', signal, headers: { 'X-CSRF-Token': session.csrf_token },
+      }),
+    alertChannels: async (signal: AbortSignal) => (await request<{ channels: AlertChannel[] }>('/api/v1/alerts/channels', { signal })).channels,
+    createAlertChannel: (session: Session, input: AlertChannelInput, signal?: AbortSignal) =>
+      request<AlertChannel>('/api/v1/alerts/channels', {
+        method: 'POST', signal, body: JSON.stringify(input),
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': session.csrf_token },
+      }),
+    deleteAlertChannel: (session: Session, id: number, signal?: AbortSignal) =>
+      request<{ ok: true }>(`/api/v1/alerts/channels/${id}`, {
+        method: 'DELETE', signal, headers: { 'X-CSRF-Token': session.csrf_token },
+      }),
+    testAlertChannel: (session: Session, url: string, signal?: AbortSignal) =>
+      request<{ ok: true }>('/api/v1/alerts/channels/test', {
+        method: 'POST', signal, body: JSON.stringify({ url }),
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': session.csrf_token },
+      }),
+    alertEvents: async (signal: AbortSignal) => (await request<{ events: AlertEvent[] }>('/api/v1/alerts/events', { signal })).events,
   }
 }
 

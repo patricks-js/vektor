@@ -1,6 +1,6 @@
 # Project Context — Linux Homelab Manager
 
-**Status:** Planejamento inicial  
+**Status:** Fase 1 (Host Monitoring — MVP) implementada  
 **Plataforma inicial:** Ubuntu Server  
 **Referência principal:** [Beszel](https://github.com/henrygd/beszel)
 
