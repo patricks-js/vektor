@@ -1,0 +1,447 @@
+import { ApiError } from '../api/client'
+import type { Api, Health, Host, Resource, ResourceKind, Series, SeriesPoint, Session, Step } from '../api/client'
+import type { LiveStore, TransportState } from '../realtime/store'
+import type { LivePoint } from '../realtime/stream'
+import { metric } from '../../features/metrics/catalog'
+
+export const isDemoMode = import.meta.env.VITE_DEMO_MODE === 'true'
+
+const GiB = 1024 ** 3
+const MiB = 1024 ** 2
+const KiB = 1024
+
+let demoLoggedIn = true
+let bootStartedAt = 0
+let cachedResources: Resource[] | undefined
+
+function getBootStartedAt() {
+  bootStartedAt ||= Date.now() - (42 * 86_400 + 7 * 3600 + 18 * 60) * 1000
+  return bootStartedAt
+}
+
+function makeSession(): Session {
+  return {
+    username: 'admin',
+    expires_at: new Date(Date.now() + 12 * 3600 * 1000).toISOString(),
+    csrf_token: 'demo-csrf-token',
+  }
+}
+
+function resource(
+  firstSeen: number,
+  id: string,
+  kind: ResourceKind,
+  externalKey: string,
+  displayName: string,
+  meta: Record<string, unknown>,
+  active = true,
+): Resource {
+  return {
+    id,
+    kind,
+    external_key: externalKey,
+    display_name: displayName,
+    metadata_json: JSON.stringify(meta),
+    active,
+    first_seen_ms: firstSeen,
+    last_seen_ms: active ? Date.now() - 2_000 : Date.now() - 4 * 86_400 * 1000,
+  }
+}
+
+function getDemoResources(): Resource[] {
+  if (cachedResources) return cachedResources
+  const firstSeen = Date.now() - 30 * 86_400 * 1000
+  cachedResources = [
+    resource(firstSeen, 'host:local', 'host', 'host:local', 'prod-fra-01', {}),
+
+    // CPU cores (8 active + 1 inactive to demonstrate pagination, search & status bars)
+    ...Array.from({ length: 8 }, (_, index) =>
+      resource(firstSeen, `cpu:${index}`, 'cpu_core', `cpu${index}`, `cpu${index}`, { core_index: index }, true),
+    ),
+    resource(firstSeen, 'cpu:8', 'cpu_core', 'cpu8', 'cpu8', { core_index: 8 }, false),
+
+    // Filesystems (green, amber, red usage tiers + 1 inactive)
+    resource(firstSeen, 'fs:root', 'filesystem', '/', '/', { mountpoint: '/', fs_type: 'ext4', source: '/dev/nvme0n1p2' }),
+    resource(firstSeen, 'fs:docker', 'filesystem', '/var/lib/docker', '/var/lib/docker', { mountpoint: '/var/lib/docker', fs_type: 'xfs', source: '/dev/nvme0n1p3' }),
+    resource(firstSeen, 'fs:backup', 'filesystem', '/mnt/backup', '/mnt/backup', { mountpoint: '/mnt/backup', fs_type: 'ext4', source: '/dev/sda1' }),
+    resource(firstSeen, 'fs:archive', 'filesystem', '/mnt/archive', '/mnt/archive', { mountpoint: '/mnt/archive', fs_type: 'nfs4', source: '10.0.4.12:/export/archive' }, false),
+
+    // Block devices
+    resource(firstSeen, 'disk:nvme0n1', 'disk', 'nvme0n1', 'nvme0n1', { kernel_name: 'nvme0n1', model: 'Samsung PM9A3 1.92TB NVMe' }),
+    resource(firstSeen, 'disk:sda', 'disk', 'sda', 'sda', { kernel_name: 'sda', model: 'WDC WD40EFZX-68AWUN0' }),
+    resource(firstSeen, 'disk:sdb', 'disk', 'sdb', 'sdb', { kernel_name: 'sdb', model: 'Crucial MX500' }, false),
+
+    // Network interfaces
+    resource(firstSeen, 'nic:ens18', 'nic', 'ens18', 'ens18', { operstate: 'up', mac: 'bc:24:11:8a:4f:10', pci_addr: '0000:00:12.0', include_in_host_aggregate: true }),
+    resource(firstSeen, 'nic:wg0', 'nic', 'wg0', 'wg0', { operstate: 'up', include_in_host_aggregate: true }),
+    resource(firstSeen, 'nic:enp2s0', 'nic', 'enp2s0', 'enp2s0', { operstate: 'down', mac: 'bc:24:11:8a:4f:11', pci_addr: '0000:00:13.0', include_in_host_aggregate: false }),
+
+    // Temperature sensors
+    resource(firstSeen, 'sensor:k10temp-tctl', 'sensor', 'k10temp:temp1', 'CPU Package (Tctl)', { chip: 'k10temp-pci-00c3', channel: 'temp1', dev_id: 'hwmon1' }),
+    resource(firstSeen, 'sensor:nvme-composite', 'sensor', 'nvme:temp1', 'NVMe Composite', { chip: 'nvme-pci-0100', channel: 'temp1', dev_id: 'hwmon2' }),
+    resource(firstSeen, 'sensor:acpi-tz0', 'sensor', 'acpitz:temp1', 'Motherboard ACPI', { chip: 'acpitz-acpi-0', channel: 'temp1', dev_id: 'hwmon0' }),
+    resource(firstSeen, 'sensor:nic-temp', 'sensor', 'igc:temp1', 'NIC Controller', { chip: 'igc-pci-0200', channel: 'temp1', dev_id: 'hwmon3' }),
+  ]
+  return cachedResources
+}
+
+function seedOf(text: string) {
+  let hash = 2166136261
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i)
+    hash = Math.imul(hash, 16777619)
+  }
+  return (hash >>> 0) / 4294967295
+}
+
+// Smooth deterministic organic signal based on timestamp (seconds) and resource seed.
+function wave(tsMs: number, seed: number) {
+  const t = tsMs / 1000
+  const phase = seed * Math.PI * 2
+  const slow = Math.sin(t / 900 + phase) * 0.45
+  const mid = Math.sin(t / 180 + phase * 1.7) * 0.3
+  const fast = Math.sin(t / 37 + phase * 2.9) * 0.15
+  const burst = Math.max(0, Math.sin(t / 410 + phase * 3.1) - 0.68) * 2.2
+  return slow + mid + fast + burst
+}
+
+function metricUnit(key: string): string {
+  if (key.endsWith('_pct')) return '%'
+  if (key.endsWith('_bytes_per_sec')) return 'bytes/s'
+  if (key.endsWith('_bytes')) return 'bytes'
+  if (key.startsWith('load.')) return 'load'
+  if (key.endsWith('_celsius')) return '°C'
+  if (key.endsWith('_per_sec') && key.includes('errors')) return 'errors/s'
+  if (key.endsWith('_per_sec') && key.includes('drops')) return 'drops/s'
+  if (key.endsWith('_per_sec')) return 'ops/s'
+  return ''
+}
+
+const fsProfile: Record<string, { total: number; pct: number }> = {
+  'fs:root': { total: 240 * GiB, pct: 46.4 },
+  'fs:docker': { total: 800 * GiB, pct: 71.8 },
+  'fs:backup': { total: 3600 * GiB, pct: 88.2 },
+}
+
+function sampleValue(id: string, key: string, tsMs: number): number {
+  const s = seedOf(`${id}:${key}`)
+  const w = wave(tsMs, s)
+  const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value))
+
+  switch (key) {
+    case metric.cpu:
+      return clamp(24 + w * 18, 3, 94)
+    case metric.core: {
+      const base = 16 + s * 42
+      return clamp(base + w * 22, 1, 98)
+    }
+    case metric.load1:
+      return clamp(1.15 + w * 0.85, 0.15, 7.5)
+    case metric.load5:
+      return clamp(1.05 + wave(tsMs, s + 0.1) * 0.55, 0.2, 6.0)
+    case metric.load15:
+      return clamp(0.95 + wave(tsMs, s + 0.2) * 0.35, 0.25, 5.0)
+    case metric.ram:
+      return clamp(56 + wave(tsMs, 0.42) * 7, 42, 86)
+    case metric.ramTotal:
+      return 32 * GiB
+    case metric.ramUsed:
+      return Math.round((sampleValue(id, metric.ram, tsMs) / 100) * 32 * GiB)
+    case metric.ramAvailable:
+      return 32 * GiB - sampleValue(id, metric.ramUsed, tsMs)
+    case metric.cache:
+      return Math.round((6.4 + wave(tsMs, 0.77) * 0.6) * GiB)
+    case metric.buffers:
+      return Math.round((1.15 + wave(tsMs, 0.19) * 0.15) * GiB)
+    case metric.swapTotal:
+      return 8 * GiB
+    case metric.swap:
+      return clamp(12 + wave(tsMs, 0.61) * 3.5, 4, 38)
+    case metric.swapUsed:
+      return Math.round((sampleValue(id, metric.swap, tsMs) / 100) * 8 * GiB)
+    case metric.fs: {
+      const profile = fsProfile[id] ?? { total: 500 * GiB, pct: 42 }
+      return clamp(profile.pct + Math.sin(tsMs / 3_600_000) * 0.8, 1, 99)
+    }
+    case metric.fsTotal:
+      return (fsProfile[id] ?? { total: 500 * GiB }).total
+    case metric.fsUsed: {
+      const total = sampleValue(id, metric.fsTotal, tsMs)
+      return Math.round((sampleValue(id, metric.fs, tsMs) / 100) * total)
+    }
+    case metric.fsAvailable:
+      return sampleValue(id, metric.fsTotal, tsMs) - sampleValue(id, metric.fsUsed, tsMs)
+    case metric.diskRead: {
+      const scale = id === 'disk:nvme0n1' ? 18 * MiB : 4.5 * MiB
+      return Math.max(24 * KiB, scale * (0.28 + Math.max(0, w * 0.9)))
+    }
+    case metric.diskWrite: {
+      const scale = id === 'disk:nvme0n1' ? 11 * MiB : 2.8 * MiB
+      return Math.max(12 * KiB, scale * (0.22 + Math.max(0, wave(tsMs, s + 0.33) * 0.85)))
+    }
+    case metric.diskReads:
+      return Math.max(4, Math.round(sampleValue(id, metric.diskRead, tsMs) / (64 * KiB)))
+    case metric.diskWrites:
+      return Math.max(2, Math.round(sampleValue(id, metric.diskWrite, tsMs) / (64 * KiB)))
+    case metric.rx: {
+      if (id === 'nic:enp2s0') return 0
+      const base = id === 'host:local' ? 6.4 * MiB : id === 'nic:ens18' ? 5.1 * MiB : 1.3 * MiB
+      return Math.max(8 * KiB, base * (0.26 + Math.max(0, w * 0.95)))
+    }
+    case metric.tx: {
+      if (id === 'nic:enp2s0') return 0
+      const base = id === 'host:local' ? 3.2 * MiB : id === 'nic:ens18' ? 2.4 * MiB : 0.8 * MiB
+      return Math.max(4 * KiB, base * (0.22 + Math.max(0, wave(tsMs, s + 0.41) * 0.9)))
+    }
+    case metric.rxErrors:
+    case metric.txErrors:
+    case metric.rxDrops:
+    case metric.txDrops:
+      return 0
+    case metric.temperature: {
+      const base = id.includes('k10temp') ? 51 : id.includes('nvme') ? 41 : id.includes('acpi') ? 45 : 39
+      return clamp(base + w * 6.5, 28, 84)
+    }
+    default:
+      return clamp(20 + w * 10, 0, 100)
+  }
+}
+
+function chooseResolution(from: number, to: number, step: Step): 30 | 300 | 3600 {
+  if (step === '30' || step === '300' || step === '3600') return Number(step) as 30 | 300 | 3600
+  const spanSec = Math.max(1, (to - from) / 1000)
+  if (spanSec / 30 <= 360) return 30
+  if (spanSec / 300 <= 360) return 300
+  return 3600
+}
+
+function buildSeries(id: string, key: string, from: number, to: number, step: Step): Series {
+  const resolution = chooseResolution(from, to, step)
+  const stepMs = resolution * 1000
+  const start = Math.floor(from / stepMs) * stepMs
+  const count = Math.ceil((to - start) / stepMs)
+  if (count > 600) throw new ApiError(400, 'point_limit')
+
+  const points: SeriesPoint[] = []
+  const expected = resolution === 30 ? 3 : resolution === 300 ? 30 : 360
+  for (let ts = start; ts < to; ts += stepMs) {
+    const mid = sampleValue(id, key, ts)
+    const a = sampleValue(id, key, ts + stepMs * 0.3)
+    const b = sampleValue(id, key, ts + stepMs * 0.7)
+    const avg = (mid + a + b) / 3
+    points.push({
+      bucket_start_ms: ts,
+      avg,
+      min: Math.min(mid, a, b),
+      max: Math.max(mid, a, b),
+      last: b,
+      sample_count: expected,
+      expected_samples: expected,
+      coverage: 1,
+    })
+  }
+  return {
+    resource_id: id,
+    metric_key: key,
+    unit: metricUnit(key),
+    resolution_s: resolution,
+    from_ms: from,
+    to_ms: to,
+    points,
+  }
+}
+
+function checkAbort(signal?: AbortSignal) {
+  signal?.throwIfAborted()
+}
+
+export function createDemoApi(onUnauthorized?: () => void): Api {
+  function requireSession() {
+    if (!demoLoggedIn) {
+      onUnauthorized?.()
+      throw new ApiError(401, 'unauthenticated')
+    }
+  }
+
+  return {
+    async me(signal?: AbortSignal): Promise<Session> {
+      checkAbort(signal)
+      if (!demoLoggedIn) throw new ApiError(401, 'unauthenticated')
+      return makeSession()
+    },
+    async login(credentials, signal): Promise<Session> {
+      checkAbort(signal)
+      if (!credentials.username.trim() || !credentials.password) {
+        throw new ApiError(400, 'invalid_parameters')
+      }
+      if (credentials.password === 'erro') {
+        throw new ApiError(401, 'invalid_credentials')
+      }
+      demoLoggedIn = true
+      return makeSession()
+    },
+    async logout(_session, signal) {
+      checkAbort(signal)
+      demoLoggedIn = false
+      return { ok: true as const }
+    },
+    async host(signal): Promise<Host> {
+      checkAbort(signal)
+      requireSession()
+      const now = Date.now()
+      return {
+        resource: { ...getDemoResources()[0], last_seen_ms: now },
+        inventory: {
+          hostname: 'prod-fra-01',
+          os_name: 'Ubuntu',
+          os_version: '24.04.2 LTS',
+          os_pretty: 'Ubuntu 24.04.2 LTS',
+          kernel: '6.8.0-52-generic',
+          arch: 'x86_64',
+          cpu_model: 'AMD EPYC 7543P 32-Core Processor',
+          cpu_cores: 8,
+          cpu_threads: 16,
+          memory_total_bytes: 32 * GiB,
+          boot_id: 'demo-boot-8a92c4e1',
+          updated_at_ms: now,
+        },
+        uptime_seconds: Math.floor((now - getBootStartedAt()) / 1000),
+      }
+    },
+    async health(signal): Promise<Health> {
+      checkAbort(signal)
+      requireSession()
+      const nowIso = new Date().toISOString()
+      return {
+        status: 'ok',
+        db_ok: true,
+        db_ping_ok: true,
+        db_bytes: 48 * MiB,
+        wal_bytes: 4 * MiB,
+        shm_bytes: 32 * KiB,
+        last_collect_at: nowIso,
+        last_write_at: nowIso,
+        rollup_lag_s: 0,
+        collector_error_count: 0,
+        dropped_live_events: 0,
+        active_live_subscribers: 1,
+        wall_clock_jump_count: 0,
+      }
+    },
+    async resource(id, signal): Promise<Resource> {
+      checkAbort(signal)
+      requireSession()
+      const found = getDemoResources().find(item => item.id === id)
+      if (!found) throw new ApiError(404, 'not_found')
+      return { ...found, last_seen_ms: found.active ? Date.now() - 1000 : found.last_seen_ms }
+    },
+    async resources(kind, signal): Promise<Resource[]> {
+      checkAbort(signal)
+      requireSession()
+      const now = Date.now()
+      return getDemoResources()
+        .filter(item => item.kind === kind)
+        .map(item => ({ ...item, last_seen_ms: item.active ? now - 1000 : item.last_seen_ms }))
+    },
+    async series(id, key, from, to, step, signal): Promise<Series> {
+      checkAbort(signal)
+      requireSession()
+      return buildSeries(id, key, from, to, step)
+    },
+  }
+}
+
+function buildSnapshotPoints(now: number): LivePoint[] {
+  const points: LivePoint[] = []
+  const push = (id: string, key: string) => {
+    points.push({ resource_id: id, metric: key, timestamp_ms: now, value: sampleValue(id, key, now) })
+  }
+
+  for (const key of [
+    metric.cpu, metric.load1, metric.load5, metric.load15,
+    metric.ram, metric.ramTotal, metric.ramUsed, metric.ramAvailable,
+    metric.cache, metric.buffers, metric.swap, metric.swapTotal, metric.swapUsed,
+    metric.rx, metric.tx,
+  ]) {
+    push('host:local', key)
+  }
+
+  for (const item of getDemoResources()) {
+    if (!item.active) continue
+    if (item.kind === 'cpu_core') push(item.id, metric.core)
+    if (item.kind === 'disk') {
+      push(item.id, metric.diskRead)
+      push(item.id, metric.diskWrite)
+      push(item.id, metric.diskReads)
+      push(item.id, metric.diskWrites)
+    }
+    if (item.kind === 'nic') {
+      push(item.id, metric.rx)
+      push(item.id, metric.tx)
+      push(item.id, metric.rxErrors)
+      push(item.id, metric.txErrors)
+      push(item.id, metric.rxDrops)
+      push(item.id, metric.txDrops)
+    }
+  }
+  return points
+}
+
+export function createDemoLiveStore(): LiveStore {
+  type Listener = () => void
+  type Reading = { state: 'waiting' | 'valid' | 'missing' | 'stale' | 'unavailable'; point?: LivePoint }
+  const readings = new Map<string, Reading>()
+  const listeners = new Map<string, Set<Listener>>()
+  const statusListeners = new Set<Listener>()
+  const qualityListeners = new Set<Listener>()
+  let status: TransportState = 'connecting'
+  const waiting: Reading = { state: 'waiting' }
+  const missing: Reading = { state: 'missing' }
+  const keyOf = (id: string, m: string) => `${id}/${m}`
+
+  function emit() {
+    const now = Date.now()
+    for (const point of buildSnapshotPoints(now)) {
+      const key = keyOf(point.resource_id, point.metric)
+      readings.set(key, { state: 'valid', point })
+      listeners.get(key)?.forEach(fn => fn())
+    }
+    if (status !== 'live') {
+      status = 'live'
+      statusListeners.forEach(fn => fn())
+    }
+  }
+
+  return {
+    getStatus: () => status,
+    getPartial: () => false,
+    subscribePartial: listener => {
+      qualityListeners.add(listener)
+      return () => { qualityListeners.delete(listener) }
+    },
+    subscribeStatus: listener => {
+      statusListeners.add(listener)
+      return () => { statusListeners.delete(listener) }
+    },
+    getReading: (id, m) => readings.get(keyOf(id, m)) ?? (status === 'live' ? missing : waiting),
+    subscribe: (id, m, listener) => {
+      const key = keyOf(id, m)
+      const group = listeners.get(key) ?? new Set<Listener>()
+      listeners.set(key, group)
+      group.add(listener)
+      return () => {
+        group.delete(listener)
+        if (group.size === 0) listeners.delete(key)
+      }
+    },
+    start() {
+      emit()
+      const timer = setInterval(emit, 1000)
+      return () => {
+        clearInterval(timer)
+        readings.clear()
+        status = 'connecting'
+      }
+    },
+  }
+}

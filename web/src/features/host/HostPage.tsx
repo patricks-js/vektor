@@ -1,12 +1,13 @@
 import * as stylex from '@stylexjs/stylex'
-import { Cpu, Gauge, MemoryStick } from 'lucide-react'
+import { Cpu, Gauge, LayoutGrid, MemoryStick, Rows2 } from 'lucide-react'
 import { useEffect, useId, useRef } from 'react'
 import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
+import { usePreferences } from '../../app/preferences'
 import { hostTabs, isHostTab } from '../../app/routes'
 import type { HostTab } from '../../app/routes'
 import { Facts, MetricCard, PageHeading } from '../../components/ui/dashboard'
-import { Empty, ErrorState, Loading, Panel, layout } from '../../components/ui/ui'
+import { Button, Empty, ErrorState, Loading, Panel, layout } from '../../components/ui/ui'
 import type { Host, Resource, ResourceKind } from '../../lib/api/client'
 import { useLiveReading } from '../../lib/realtime/hooks'
 import { useApi, useHost } from '../../lib/api/queries'
@@ -21,28 +22,46 @@ import type { ResourceColumn } from './ResourceTable'
 import { displayName, metadata, metadataText } from './resourceMetadata'
 
 const s = stylex.create({
-  tabs: { display: 'flex', flexWrap: 'wrap', gap: '4px 8px', borderBlockEndWidth: 1, borderBlockEndStyle: 'solid', borderBlockEndColor: 'var(--vk-border-subtle)', paddingBlockEnd: 4 },
-  tab: {
-    display: 'inline-flex', alignItems: 'center', backgroundColor: { default: 'transparent', ':hover': 'var(--vk-surface-3)' },
-    color: 'var(--vk-text-secondary)', borderTopWidth: 0, borderLeftWidth: 0, borderRightWidth: 0, borderBlockEndWidth: 2, borderBlockEndStyle: 'solid', borderBlockEndColor: 'transparent', borderRadius: 0,
-    fontWeight: 600, paddingInline: { default: 8, '@media (min-width: 768px)': 12 }, minHeight: 44, cursor: 'pointer',
+  headerCard: {
+    display: 'grid', gap: 14, minWidth: 0,
+    backgroundColor: 'var(--vk-surface-1)', borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--vk-border-subtle)',
+    borderRadius: 'var(--vk-radius-3)', padding: { default: 16, '@media (min-width: 1024px)': 20 },
   },
-  active: { color: 'var(--vk-accent)', borderBlockEndColor: 'var(--vk-accent)', backgroundColor: 'var(--vk-surface-2)' },
+  tabs: {
+    display: 'inline-flex', flexWrap: 'wrap', gap: 4, width: 'fit-content', maxWidth: '100%',
+    padding: 4, borderRadius: 'var(--vk-radius-2)', backgroundColor: 'var(--vk-surface-2)',
+    borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--vk-border-subtle)',
+  },
+  tab: {
+    display: 'inline-flex', alignItems: 'center',
+    backgroundColor: { default: 'transparent', ':hover': 'var(--vk-surface-3)' },
+    color: { default: 'var(--vk-text-secondary)', ':hover': 'var(--vk-text-primary)' },
+    borderWidth: 1, borderStyle: 'solid', borderColor: 'transparent',
+    borderRadius: 'var(--vk-radius-1)', fontSize: 13, fontWeight: 500,
+    paddingInline: { default: 10, '@media (min-width: 768px)': 14 }, minHeight: { default: 34, '@media (pointer: coarse)': 44 },
+    cursor: 'pointer', transition: 'background-color 150ms, color 150ms, border-color 150ms',
+  },
+  active: {
+    color: 'var(--vk-text-primary)', backgroundColor: 'var(--vk-surface-1)',
+    borderColor: 'var(--vk-border-strong)', fontWeight: 600,
+  },
+  controls: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
+  layoutBtn: { display: { default: 'none', '@media (min-width: 1024px)': 'inline-flex' } },
 })
 
-function live(id: string | undefined, key: string, unit: string, detail = true) {
-  return id ? <LiveValue id={id} metric={key} unit={unit} detail={detail} /> : '—'
+function live(id: string | undefined, key: string, unit: string, detail = true, bar = false) {
+  return id ? <LiveValue id={id} metric={key} unit={unit} detail={detail} bar={bar} /> : '—'
 }
 
-function liveColumn(label: string, key: string, unit: string): ResourceColumn {
-  return { label, cell: resource => resource.active ? live(resource.id, key, unit, false) : '—' }
+function liveColumn(label: string, key: string, unit: string, compactBar = false): ResourceColumn {
+  return { label, cell: resource => resource.active ? <LiveValue id={resource.id} metric={key} unit={unit} compactBar={compactBar} /> : '—' }
 }
 
 function persistedColumn(label: string, key: string, unit: string): ResourceColumn {
   return { label, cell: resource => resource.active ? <PersistedValue id={resource.id} metric={key} unit={unit} /> : '—' }
 }
 
-const coreColumns = [liveColumn('Utilização', metric.core, '%')]
+const coreColumns = [liveColumn('Utilização', metric.core, '%', true)]
 const fsColumns = [
   { label: 'Tipo', cell: (r: Resource) => metadataText(r, 'fs_type') ?? '—' },
   persistedColumn('Capacidade', metric.fsTotal, 'bytes'),
@@ -65,12 +84,12 @@ const sensorColumns = [
   persistedColumn('Temperatura', metric.temperature, '°C'),
 ]
 
-function CpuView({ host }: { host?: Host }) {
+function CpuView({ host, singleColumn }: { host?: Host; singleColumn: boolean }) {
   const id = host?.resource.id
   return <>
     <div {...stylex.props(layout.grid2)}>
-      <MetricCard label="CPU total" icon={Cpu} value={live(id, metric.cpu, '%')} context="Utilização ao vivo" />
-      <Panel title="Processador">
+      <MetricCard label="CPU total" icon={Cpu} value={live(id, metric.cpu, '%', true, true)} context="Utilização ao vivo" />
+      <Panel title="Processador" subtitle="Topologia e modelo identificados">
         <Facts items={[
           ['Modelo', host?.inventory.cpu_model || undefined],
           ['Núcleos', host?.inventory.cpu_cores || undefined],
@@ -79,12 +98,12 @@ function CpuView({ host }: { host?: Host }) {
         ]} />
       </Panel>
     </div>
-    <Panel title="Carga média">
+    <Panel title="Carga média" subtitle="Load average do sistema operacional">
       <Facts items={[['1 minuto', live(id, metric.load1, 'load')], ['5 minutos', live(id, metric.load5, 'load')], ['15 minutos', live(id, metric.load15, 'load')]]} />
     </Panel>
-    <div {...stylex.props(layout.grid2)}>
-      <ChartPanel title="Utilização da CPU" resourceId={id} metric={metric.cpu} />
-      <ChartPanel title="Carga média de 1 minuto" resourceId={id} metric={metric.load1} />
+    <div {...stylex.props(singleColumn ? layout.grid1 : layout.grid2)}>
+      <ChartPanel title="Utilização da CPU" subtitle="Percentual médio de ocupação" resourceId={id} metric={metric.cpu} color="cpu" />
+      <ChartPanel title="Carga média de 1 minuto" subtitle="Pressão de processos em execução" resourceId={id} metric={metric.load1} color="cpu" />
     </div>
     <ResourceTable kind="cpu_core" title="Núcleos da CPU" columns={coreColumns} empty="Nenhum núcleo foi identificado pelo coletor." />
   </>
@@ -94,17 +113,17 @@ function SwapUtilization({ id }: { id: string }) {
   const total = useLiveReading(id, metric.swapTotal)
   return total.state === 'valid' && total.point?.value === 0
     ? <span>Não configurado</span>
-    : <LiveValue id={id} metric={metric.swap} unit="%" detail />
+    : <LiveValue id={id} metric={metric.swap} unit="%" detail bar />
 }
 
-function MemoryView({ host }: { host?: Host }) {
+function MemoryView({ host, singleColumn }: { host?: Host; singleColumn: boolean }) {
   const id = host?.resource.id
   return <>
     <div {...stylex.props(layout.grid2)}>
-      <MetricCard label="Memória em uso" icon={MemoryStick} value={live(id, metric.ram, '%')} context="RAM ao vivo" />
+      <MetricCard label="Memória em uso" icon={MemoryStick} value={live(id, metric.ram, '%', true, true)} context="RAM ao vivo" />
       <MetricCard label="Utilização de swap" icon={Gauge} dense value={id ? <SwapUtilization id={id} /> : '—'} context="Swap ao vivo" />
     </div>
-    <Panel title="Distribuição da memória">
+    <Panel title="Distribuição da memória" subtitle="Alocação atual de RAM, cache, buffers e swap">
       <Facts items={[
         ['RAM total', live(id, metric.ramTotal, 'bytes')], ['RAM usada', live(id, metric.ramUsed, 'bytes')],
         ['RAM disponível', live(id, metric.ramAvailable, 'bytes')], ['Cache', live(id, metric.cache, 'bytes')],
@@ -112,9 +131,9 @@ function MemoryView({ host }: { host?: Host }) {
         ['Swap usada', live(id, metric.swapUsed, 'bytes')],
       ]} />
     </Panel>
-    <div {...stylex.props(layout.grid2)}>
-      <ChartPanel title="Uso de memória" resourceId={id} metric={metric.ram} color="memory" />
-      <ChartPanel title="Uso de swap" resourceId={id} metric={metric.swap} color="memory" />
+    <div {...stylex.props(singleColumn ? layout.grid1 : layout.grid2)}>
+      <ChartPanel title="Uso de memória" subtitle="Percentual de RAM utilizada" resourceId={id} metric={metric.ram} color="memory" />
+      <ChartPanel title="Uso de swap" subtitle="Percentual de swap utilizada" resourceId={id} metric={metric.swap} color="memory" />
     </div>
   </>
 }
@@ -126,7 +145,7 @@ const metadataLabels: Partial<Record<ResourceKind, [string, string][]>> = {
   sensor: [['chip', 'Chip'], ['channel', 'Canal'], ['dev_id', 'Dispositivo']],
 }
 
-function ResourceDetails({ id, allowed }: { id: string; allowed: ResourceKind[] }) {
+function ResourceDetails({ id, allowed, singleColumn }: { id: string; allowed: ResourceKind[]; singleColumn: boolean }) {
   const api = useApi()
   const query = useQuery({ queryKey: ['resource', id], queryFn: ({ signal }) => api.resource(id, signal), staleTime: 45_000, refetchInterval: 60_000 })
   if (query.isPending) return <Panel title="Detalhe do recurso"><Loading /></Panel>
@@ -137,7 +156,7 @@ function ResourceDetails({ id, allowed }: { id: string; allowed: ResourceKind[] 
   const extra = (metadataLabels[resource.kind] ?? []).map(([key, label]): [string, string | undefined] => [label, metadataText(resource, key)])
   const meta = metadata(resource)
   return <>
-    <Panel title={displayName(resource)} emphasized>
+    <Panel title={displayName(resource)} subtitle="Atributos persistentes do recurso selecionado" emphasized>
       {query.isRefetchError && <ErrorState error={query.error} retry={() => { void query.refetch() }} />}
       <Facts items={[
         ['ID persistente', <span {...stylex.props(layout.technical)}>{resource.id}</span>],
@@ -149,20 +168,20 @@ function ResourceDetails({ id, allowed }: { id: string; allowed: ResourceKind[] 
       ]} />
       {resource.kind === 'sensor' && <Facts items={sensorColumns.slice(-1).map(column => [column.label, column.cell(resource)])} />}
     </Panel>
-    {resource.kind === 'filesystem' && <ChartPanel title="Utilização da montagem" resourceId={id} metric={metric.fs} color="storage" />}
-    {resource.kind === 'disk' && <div {...stylex.props(layout.grid2)}>
-      <ChartPanel title="Leitura por segundo" resourceId={id} metric={metric.diskRead} color="storage" />
-      <ChartPanel title="Escrita por segundo" resourceId={id} metric={metric.diskWrite} color="tx" />
+    {resource.kind === 'filesystem' && <ChartPanel title="Utilização da montagem" subtitle="Espaço ocupado na partição" resourceId={id} metric={metric.fs} color="storage" />}
+    {resource.kind === 'disk' && <div {...stylex.props(singleColumn ? layout.grid1 : layout.grid2)}>
+      <ChartPanel title="Leitura por segundo" subtitle="Throughput de leitura do bloco" resourceId={id} metric={metric.diskRead} color="disk-io" />
+      <ChartPanel title="Escrita por segundo" subtitle="Throughput de escrita do bloco" resourceId={id} metric={metric.diskWrite} color="tx" />
     </div>}
-    {resource.kind === 'nic' && <div {...stylex.props(layout.grid2)}>
-      <ChartPanel title="Recepção por segundo" resourceId={id} metric={metric.rx} color="rx" />
-      <ChartPanel title="Transmissão por segundo" resourceId={id} metric={metric.tx} color="tx" />
+    {resource.kind === 'nic' && <div {...stylex.props(singleColumn ? layout.grid1 : layout.grid2)}>
+      <ChartPanel title="Recepção por segundo" subtitle="Tráfego de entrada da interface" resourceId={id} metric={metric.rx} color="rx" />
+      <ChartPanel title="Transmissão por segundo" subtitle="Tráfego de saída da interface" resourceId={id} metric={metric.tx} color="tx" />
     </div>}
-    {resource.kind === 'sensor' && <ChartPanel title="Histórico de temperatura" resourceId={id} metric={metric.temperature} color="storage" />}
+    {resource.kind === 'sensor' && <ChartPanel title="Histórico de temperatura" subtitle="Leituras térmicas do canal" resourceId={id} metric={metric.temperature} color="sensor" />}
   </>
 }
 
-function HostResources({ tab, host }: { tab: Exclude<HostTab, 'cpu' | 'memory'>; host?: Host }) {
+function HostResources({ tab, host, singleColumn }: { tab: Exclude<HostTab, 'cpu' | 'memory'>; host?: Host; singleColumn: boolean }) {
   const [search] = useSearchParams()
   const link = usePeriodLink()
   const selected = search.get('resource') ?? undefined
@@ -174,8 +193,7 @@ function HostResources({ tab, host }: { tab: Exclude<HostTab, 'cpu' | 'memory'>;
   const allowed: ResourceKind[] = tab === 'storage' ? ['filesystem', 'disk'] : tab === 'network' ? ['nic'] : ['sensor']
 
   return <>
-    {tab === 'network' && <Panel title="Tráfego agregado do host">
-      <p {...stylex.props(layout.text)}>Taxas por segundo das interfaces incluídas pelo coletor no agregado do host.</p>
+    {tab === 'network' && <Panel title="Tráfego agregado do host" subtitle="Taxas por segundo das interfaces incluídas pelo coletor no agregado do host.">
       <Facts items={[
         ['Recepção', live(host?.resource.id, metric.rx, 'bytes/s')],
         ['Transmissão', live(host?.resource.id, metric.tx, 'bytes/s')],
@@ -183,14 +201,14 @@ function HostResources({ tab, host }: { tab: Exclude<HostTab, 'cpu' | 'memory'>;
     </Panel>}
     {selected && <section aria-label="Recurso selecionado" tabIndex={-1} ref={detail} {...stylex.props(layout.stack)}>
       {/^[A-Za-z0-9:_-]{1,128}$/.test(selected)
-        ? <ResourceDetails key={selected} id={selected} allowed={allowed} />
+        ? <ResourceDetails key={selected} id={selected} allowed={allowed} singleColumn={singleColumn} />
         : <Panel title="Detalhe do recurso"><Empty>O link contém um identificador inválido.</Empty></Panel>}
     </section>}
-    {!selected && tab === 'network' && <div {...stylex.props(layout.grid2)}>
-      <ChartPanel title="Histórico de recepção do host" resourceId={host?.resource.id} metric={metric.rx} color="rx" />
-      <ChartPanel title="Histórico de transmissão do host" resourceId={host?.resource.id} metric={metric.tx} color="tx" />
+    {!selected && tab === 'network' && <div {...stylex.props(singleColumn ? layout.grid1 : layout.grid2)}>
+      <ChartPanel title="Histórico de recepção do host" subtitle="Volume recebido agregado" resourceId={host?.resource.id} metric={metric.rx} color="rx" />
+      <ChartPanel title="Histórico de transmissão do host" subtitle="Volume enviado agregado" resourceId={host?.resource.id} metric={metric.tx} color="tx" />
     </div>}
-    {!selected && tab !== 'network' && <p {...stylex.props(layout.text)}>Selecione um recurso na tabela para abrir seu histórico.</p>}
+    {!selected && tab !== 'network' && <p {...stylex.props(layout.small)}>Selecione um recurso na tabela para abrir seu histórico.</p>}
     {tab === 'storage' && <>
       <ResourceTable kind="filesystem" title="Capacidade dos sistemas de arquivos" columns={fsColumns} selected={selected} href={url} />
       <ResourceTable kind="disk" title="I/O dos dispositivos de bloco" columns={diskColumns} selected={selected} href={url} />
@@ -213,34 +231,49 @@ export function HostPage() {
   const nav = useNavigate()
   const link = usePeriodLink()
   const host = useHost()
+  const { singleColumn, setSingleColumn } = usePreferences()
   const id = useId()
   if (!isHostTab(subsystem)) return <Navigate replace to={link('/host/cpu')} />
 
   return (
     <div {...stylex.props(layout.page)}>
-      <PageHeading title="Host" description={descriptions[subsystem]} action={<TimeRangeSelector />} />
-      <div role="tablist" aria-label="Subsistemas do host" {...stylex.props(s.tabs)}
-        onKeyDown={event => {
-          const index = hostTabs.findIndex(tab => tab.id === subsystem)
-          const move = event.key === 'ArrowLeft' ? index - 1 : event.key === 'ArrowRight' ? index + 1 :
-            event.key === 'Home' ? 0 : event.key === 'End' ? hostTabs.length - 1 : undefined
-          if (move === undefined) return
-          event.preventDefault()
-          const next = hostTabs[(move + hostTabs.length) % hostTabs.length].id
-          void nav(link('/host/' + next))
-          event.currentTarget.querySelector<HTMLButtonElement>(`[data-tab="${next}"]`)?.focus()
-        }}>
-        {hostTabs.map(tab => <button type="button" role="tab" key={tab.id} data-tab={tab.id} id={id + tab.id}
-          aria-controls={id + '-panel'} aria-selected={tab.id === subsystem} tabIndex={tab.id === subsystem ? 0 : -1}
-          onClick={() => { if (tab.id !== subsystem) void nav(link('/host/' + tab.id)) }}
-          {...stylex.props(s.tab, tab.id === subsystem && s.active)}>{tab.label}</button>)}
+      <div {...stylex.props(s.headerCard)}>
+        <PageHeading title="Host" description={descriptions[subsystem]} action={
+          <div {...stylex.props(s.controls)}>
+            <TimeRangeSelector />
+            <span {...stylex.props(s.layoutBtn)}>
+              <Button variant="outline" aria-label={singleColumn ? 'Exibir gráficos em duas colunas' : 'Exibir gráficos em uma coluna'}
+                aria-pressed={singleColumn}
+                title={singleColumn ? 'Grade de 2 colunas' : 'Coluna única'}
+                onClick={() => setSingleColumn(!singleColumn)}>
+                {singleColumn ? <Rows2 size={15} aria-hidden /> : <LayoutGrid size={15} aria-hidden />}
+              </Button>
+            </span>
+          </div>
+        } />
+        <div role="tablist" aria-label="Subsistemas do host" {...stylex.props(s.tabs)}
+          onKeyDown={event => {
+            const index = hostTabs.findIndex(tab => tab.id === subsystem)
+            const move = event.key === 'ArrowLeft' ? index - 1 : event.key === 'ArrowRight' ? index + 1 :
+              event.key === 'Home' ? 0 : event.key === 'End' ? hostTabs.length - 1 : undefined
+            if (move === undefined) return
+            event.preventDefault()
+            const next = hostTabs[(move + hostTabs.length) % hostTabs.length].id
+            void nav(link('/host/' + next))
+            event.currentTarget.querySelector<HTMLButtonElement>(`[data-tab="${next}"]`)?.focus()
+          }}>
+          {hostTabs.map(tab => <button type="button" role="tab" key={tab.id} data-tab={tab.id} id={id + tab.id}
+            aria-controls={id + '-panel'} aria-selected={tab.id === subsystem} tabIndex={tab.id === subsystem ? 0 : -1}
+            onClick={() => { if (tab.id !== subsystem) void nav(link('/host/' + tab.id)) }}
+            {...stylex.props(s.tab, tab.id === subsystem && s.active)}>{tab.label}</button>)}
+        </div>
       </div>
       <div role="tabpanel" id={id + '-panel'} aria-labelledby={id + subsystem} {...stylex.props(layout.stack)}>
         {host.isPending && <Loading label="Consultando inventário do host…" />}
         {host.isError && <ErrorState error={host.error} retry={() => { void host.refetch() }} title="Inventário do host indisponível" />}
         <ChartCursorProvider key={subsystem}>
-          {subsystem === 'cpu' ? <CpuView host={host.data} /> : subsystem === 'memory' ? <MemoryView host={host.data} /> :
-            <HostResources key={subsystem} tab={subsystem} host={host.data} />}
+          {subsystem === 'cpu' ? <CpuView host={host.data} singleColumn={singleColumn} /> : subsystem === 'memory' ? <MemoryView host={host.data} singleColumn={singleColumn} /> :
+            <HostResources key={subsystem} tab={subsystem} host={host.data} singleColumn={singleColumn} />}
         </ChartCursorProvider>
       </div>
     </div>

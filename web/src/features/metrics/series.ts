@@ -44,6 +44,30 @@ export function plotPath(series: Series, x: (time: number) => number, y: (value:
   }).join(' ')
 }
 
+export function areaPath(series: Series, x: (time: number) => number, y: (value: number) => number, baseline: number) {
+  const step = series.resolution_s * 1000
+  const segments: { start: number; end: number; parts: string[] }[] = []
+  let previous: number | undefined
+  for (const point of series.points) {
+    const px = x(point.bucket_start_ms)
+    const py = y(point.avg)
+    const contiguous = previous !== undefined && point.bucket_start_ms - previous === step
+    if (!contiguous) {
+      segments.push({ start: px, end: px, parts: [`M${px.toFixed(2)} ${py.toFixed(2)}`] })
+    } else {
+      const current = segments[segments.length - 1]
+      current.end = px
+      current.parts.push(`L${px.toFixed(2)} ${py.toFixed(2)}`)
+    }
+    previous = point.bucket_start_ms
+  }
+  const base = baseline.toFixed(2)
+  return segments
+    .filter(segment => segment.parts.length > 1)
+    .map(segment => `${segment.parts.join(' ')} L${segment.end.toFixed(2)} ${base} L${segment.start.toFixed(2)} ${base} Z`)
+    .join(' ')
+}
+
 export function historyCoverage(series: Series) {
   if (!series.points.length) return
   const coverage = series.points.map(point => point.coverage)

@@ -4,15 +4,25 @@ import { useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { ApiError, createApi } from '../../lib/api/client'
 import type { Session } from '../../lib/api/client'
+import { createDemoApi, isDemoMode } from '../../lib/demo/mock'
 import { Brand, Button, TextField, layout } from '../../components/ui/ui'
 
 const s = stylex.create({
   screen: { display: 'grid', minHeight: '100dvh', placeItems: 'center', padding: { default: 16, '@media (min-width: 768px)': 32 } },
-  frame: { display: 'grid', gap: 16, width: 'min(100%, 430px)' },
-  box: { backgroundColor: 'var(--vk-surface-1)', padding: { default: 24, '@media (min-width: 768px)': 32 }, borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--vk-border-strong)', borderBlockStartWidth: 2, borderBlockStartStyle: 'solid', borderBlockStartColor: 'var(--vk-accent)', display: 'grid', gap: 24, minWidth: 0 },
-  brand: { borderBlockEndWidth: 1, borderBlockEndStyle: 'solid', borderBlockEndColor: 'var(--vk-border-subtle)', paddingBlockEnd: 20 },
-  footer: { display: 'flex', alignItems: 'center', gap: 8, color: 'var(--vk-text-muted)' },
-  error: { color: 'var(--vk-critical)', borderInlineStartWidth: 2, borderInlineStartStyle: 'solid', borderInlineStartColor: 'var(--vk-critical)', paddingInlineStart: 10 },
+  frame: { display: 'grid', gap: 16, width: 'min(100%, 400px)' },
+  box: {
+    backgroundColor: 'var(--vk-surface-1)', padding: { default: 24, '@media (min-width: 768px)': 28 },
+    borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--vk-border-subtle)',
+    borderRadius: 'var(--vk-radius-3)', boxShadow: 'var(--vk-shadow-md)',
+    display: 'grid', gap: 22, minWidth: 0,
+  },
+  brand: { borderBlockEndWidth: 1, borderBlockEndStyle: 'solid', borderBlockEndColor: 'var(--vk-border-subtle)', paddingBlockEnd: 18 },
+  footer: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: 'var(--vk-text-muted)' },
+  error: {
+    color: 'var(--vk-critical)', fontSize: 13,
+    backgroundColor: 'var(--vk-surface-2)', borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--vk-critical)',
+    borderRadius: 'var(--vk-radius-2)', paddingBlock: 10, paddingInline: 12,
+  },
 })
 
 export function AuthFrame({ children }: { children: ReactNode }) {
@@ -29,7 +39,7 @@ export function AuthFrame({ children }: { children: ReactNode }) {
   )
 }
 
-const api = createApi()
+const api = isDemoMode ? createDemoApi() : createApi()
 
 export function Login({ expired, onSuccess }: { expired: boolean; onSuccess: (session: Session) => void }) {
   const [visible, setVisible] = useState(false)
@@ -99,18 +109,22 @@ export function Login({ expired, onSuccess }: { expired: boolean; onSuccess: (se
     <AuthFrame>
       <div {...stylex.props(layout.compact)}>
         <h1 {...stylex.props(layout.pageTitle)}>Entrar</h1>
-        <p {...stylex.props(layout.text)}>{expired ? 'Sua sessão expirou. Entre novamente para continuar.' : 'Acesse o painel de monitoramento do host.'}</p>
+        <p {...stylex.props(layout.small)}>
+          {isDemoMode
+            ? 'Modo demo ativo. Informe qualquer usuário e senha para entrar (use "erro" como senha para testar falha).'
+            : expired ? 'Sua sessão expirou. Entre novamente para continuar.' : 'Acesse o painel de monitoramento do host.'}
+        </p>
       </div>
       <form onSubmit={submit} {...stylex.props(layout.stack)}>
         <TextField label="Usuário" name="username" autoComplete="username" autoCapitalize="none" spellCheck={false} maxLength={128} required ref={username} />
         <TextField label="Senha" name="password" autoComplete="current-password" type={visible ? 'text' : 'password'} required
           action={<Button variant="outline" aria-label={visible ? 'Ocultar senha' : 'Mostrar senha'} onClick={() => setVisible(!visible)}>
-            {visible ? <EyeOff size={17} aria-hidden /> : <Eye size={17} aria-hidden />}
+            {visible ? <EyeOff size={16} aria-hidden /> : <Eye size={16} aria-hidden />}
           </Button>} />
         {error && <p ref={message} tabIndex={-1} role="alert" {...stylex.props(s.error)}>{error}</p>}
         <Button type="submit" variant="primary" busy={pending} disabled={retryIn > 0}>
           {pending ? 'Entrando…' : retryIn ? `Tentar em ${retryIn}s` : 'Entrar'}
-          {!pending && !retryIn && <ArrowRight size={16} aria-hidden />}
+          {!pending && !retryIn && <ArrowRight size={15} aria-hidden />}
         </Button>
       </form>
     </AuthFrame>

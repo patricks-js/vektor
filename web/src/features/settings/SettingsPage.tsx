@@ -1,24 +1,69 @@
 import * as stylex from '@stylexjs/stylex'
-import { LogOut } from 'lucide-react'
+import { FileText, LogOut, SlidersHorizontal, UserRound } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { ranges, isRange, usePreferences } from '../../app/preferences'
-import { Facts, PageHeading } from '../../components/ui/dashboard'
-import { Button, ErrorState, Modal, Panel, SelectField, layout } from '../../components/ui/ui'
+import { isRange, isTheme, ranges, usePreferences } from '../../app/preferences'
+import { Facts } from '../../components/ui/dashboard'
+import { Button, ErrorState, Modal, SelectField, layout } from '../../components/ui/ui'
 import { dateTime } from '../metrics/format'
 import { useSession } from '../auth/session'
 import fontLicenses from '../../styles/geist-license.txt?url'
 
 const s = stylex.create({
-  checkbox: { display: 'flex', width: 'fit-content', gap: 8, minHeight: 44, alignItems: 'center', cursor: 'pointer' },
-  check: { width: 18, height: 18, accentColor: 'var(--vk-accent)' },
-  preference: { maxWidth: 300 },
-  license: { color: 'var(--vk-accent)', textUnderlineOffset: 4 },
+  card: {
+    display: 'grid', gap: 20, minWidth: 0,
+    backgroundColor: 'var(--vk-surface-1)', borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--vk-border-subtle)',
+    borderRadius: 'var(--vk-radius-3)', padding: { default: 18, '@media (min-width: 1024px)': 28 },
+  },
+  header: {
+    display: 'grid', gap: 4, paddingBlockEnd: 20,
+    borderBlockEndWidth: 1, borderBlockEndStyle: 'solid', borderBlockEndColor: 'var(--vk-border-subtle)',
+  },
+  title: { outlineStyle: 'none' },
+  body: {
+    display: 'grid', gap: 24, minWidth: 0,
+    gridTemplateColumns: { default: 'minmax(0, 1fr)', '@media (min-width: 860px)': '210px minmax(0, 1fr)' },
+    alignItems: 'start',
+  },
+  sideNav: {
+    display: 'flex', flexWrap: 'wrap', gap: 4,
+    flexDirection: { default: 'row', '@media (min-width: 860px)': 'column' },
+  },
+  sideItem: {
+    display: 'inline-flex', alignItems: 'center', gap: 10, paddingBlock: 8, paddingInline: 12,
+    minHeight: { default: 38, '@media (pointer: coarse)': 44 }, borderRadius: 'var(--vk-radius-2)',
+    fontSize: 13, fontWeight: 500, textDecoration: 'none', cursor: 'pointer',
+    borderWidth: 0, textAlign: 'start',
+    color: { default: 'var(--vk-text-secondary)', ':hover': 'var(--vk-text-primary)' },
+    backgroundColor: { default: 'transparent', ':hover': 'var(--vk-surface-2)' },
+    transition: 'background-color 150ms, color 150ms',
+  },
+  sideItemActive: {
+    backgroundColor: 'var(--vk-surface-3)', color: 'var(--vk-text-primary)', fontWeight: 600,
+  },
+  content: { display: 'grid', gap: 28, minWidth: 0, maxWidth: 680 },
+  section: {
+    display: 'grid', gap: 16, minWidth: 0,
+    paddingBlockEnd: 24, borderBlockEndWidth: 1, borderBlockEndStyle: 'solid', borderBlockEndColor: 'var(--vk-border-subtle)',
+  },
+  sectionLast: { paddingBlockEnd: 0, borderBlockEndWidth: 0 },
+  sectionHead: { display: 'grid', gap: 4 },
+  fields: { display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))' },
+  checkbox: { display: 'flex', width: 'fit-content', gap: 10, minHeight: 44, alignItems: 'center', cursor: 'pointer', fontSize: 13 },
+  check: { width: 16, height: 16, accentColor: 'var(--vk-accent)' },
+  license: { color: 'var(--vk-text-primary)', textUnderlineOffset: 4, fontSize: 13 },
   feedback: { minHeight: '19px' },
 })
 
+const sections = [
+  { id: 'geral', label: 'Geral', icon: SlidersHorizontal },
+  { id: 'sessao', label: 'Sessão', icon: UserRound },
+  { id: 'sobre', label: 'Sobre', icon: FileText },
+] as const
+
 export function SettingsPage() {
-  const { collapsed, setCollapsed, defaultRange, setDefaultRange } = usePreferences()
+  const { singleColumn, setSingleColumn, theme, setTheme, defaultRange, setDefaultRange } = usePreferences()
   const { session, logout } = useSession()
+  const [activeSection, setActiveSection] = useState<typeof sections[number]['id']>('geral')
   const [feedback, setFeedback] = useState('')
   const [dialog, setDialog] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -48,31 +93,72 @@ export function SettingsPage() {
 
   return (
     <div {...stylex.props(layout.page)}>
-      <PageHeading title="Configurações" description="Preferências locais e sessão administrativa" />
-      <div {...stylex.props(layout.grid2)}>
-        <Panel title="Interface">
-          <div {...stylex.props(s.preference)}>
-            <SelectField label="Período padrão" value={defaultRange} onChange={event => {
-              if (isRange(event.currentTarget.value)) saved(setDefaultRange(event.currentTarget.value))
-            }}>
-              {ranges.map(range => <option key={range}>{range}</option>)}
-            </SelectField>
+      <div {...stylex.props(s.card)}>
+        <div {...stylex.props(s.header)}>
+          <h1 {...stylex.props(layout.pageTitle, s.title)} tabIndex={-1}>Configurações</h1>
+          <p {...stylex.props(layout.small)}>Gerencie preferências de exibição e a sessão administrativa.</p>
+        </div>
+
+        <div {...stylex.props(s.body)}>
+          <nav aria-label="Seções de configurações" {...stylex.props(s.sideNav)}>
+            {sections.map(({ id, label, icon: Icon }) => (
+              <a key={id} href={`#${id}`} onClick={() => setActiveSection(id)}
+                {...stylex.props(s.sideItem, activeSection === id && s.sideItemActive)}>
+                <Icon size={15} aria-hidden />
+                <span>{label}</span>
+              </a>
+            ))}
+          </nav>
+
+          <div {...stylex.props(s.content)}>
+            <section id="geral" aria-labelledby="settings-general" {...stylex.props(s.section)}>
+              <div {...stylex.props(s.sectionHead)}>
+                <h2 id="settings-general" {...stylex.props(layout.sectionTitle)}>Interface</h2>
+                <p {...stylex.props(layout.small)}>Ajuste o período padrão, o tema e a disposição dos gráficos.</p>
+              </div>
+              <div {...stylex.props(s.fields)}>
+                <SelectField label="Período padrão" value={defaultRange} onChange={event => {
+                  if (isRange(event.currentTarget.value)) saved(setDefaultRange(event.currentTarget.value))
+                }}>
+                  {ranges.map(range => <option key={range}>{range}</option>)}
+                </SelectField>
+                <SelectField label="Tema da interface" value={theme} onChange={event => {
+                  if (isTheme(event.currentTarget.value)) saved(setTheme(event.currentTarget.value))
+                }}>
+                  <option value="dark">Escuro</option>
+                  <option value="light">Claro</option>
+                </SelectField>
+              </div>
+              <label {...stylex.props(s.checkbox)}>
+                <input type="checkbox" {...stylex.props(s.check)} checked={singleColumn} onChange={event => saved(setSingleColumn(event.currentTarget.checked))} />
+                Exibir gráficos em coluna única
+              </label>
+              <p role="status" {...stylex.props(layout.small, s.feedback)}>{feedback}</p>
+            </section>
+
+            <section id="sessao" aria-labelledby="settings-session" {...stylex.props(s.section)}>
+              <div {...stylex.props(s.sectionHead)}>
+                <h2 id="settings-session" {...stylex.props(layout.sectionTitle)}>Sessão</h2>
+                <p {...stylex.props(layout.small)}>Detalhes da autenticação local ativa neste navegador.</p>
+              </div>
+              <Facts items={[['Usuário', session.username], ['Expiração', dateTime(session.expires_at)]]} />
+              <div>
+                <Button variant="danger" onClick={() => setDialog(true)}><LogOut size={15} aria-hidden /> Encerrar sessão</Button>
+              </div>
+            </section>
+
+            <section id="sobre" aria-labelledby="settings-about" {...stylex.props(s.section, s.sectionLast)}>
+              <div {...stylex.props(s.sectionHead)}>
+                <h2 id="settings-about" {...stylex.props(layout.sectionTitle)}>Sobre o Vektor</h2>
+                <p {...stylex.props(layout.small)}>Informações da interface web e contrato da API.</p>
+              </div>
+              <Facts items={[['Interface', __APP_VERSION__], ['Contrato da API', 'v1'], ['Fuso dos gráficos', 'UTC']]} />
+              <p><a href={fontLicenses} {...stylex.props(s.license)}>Licença da tipografia</a></p>
+            </section>
           </div>
-          <label {...stylex.props(s.checkbox)}>
-            <input type="checkbox" {...stylex.props(s.check)} checked={collapsed} onChange={event => saved(setCollapsed(event.currentTarget.checked))} />
-            Recolher a barra lateral no desktop
-          </label>
-          <p role="status" {...stylex.props(layout.small, s.feedback)}>{feedback}</p>
-        </Panel>
-        <Panel title="Sobre o Vektor">
-          <Facts items={[['Interface', __APP_VERSION__], ['Contrato da API', 'v1'], ['Fuso dos gráficos', 'UTC']]} />
-          <p><a href={fontLicenses} {...stylex.props(s.license)}>Licença da tipografia</a></p>
-        </Panel>
+        </div>
       </div>
-      <Panel title="Sessão">
-        <Facts items={[['Usuário', session.username], ['Expiração', dateTime(session.expires_at)]]} />
-        <div><Button variant="danger" onClick={() => setDialog(true)}><LogOut size={16} aria-hidden /> Encerrar sessão</Button></div>
-      </Panel>
+
       <Modal title="Encerrar sessão" open={dialog} onClose={() => {
         if (busy) return
         setError(undefined)

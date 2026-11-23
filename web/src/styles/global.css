@@ -14,31 +14,43 @@
 }
 :root {
   color-scheme: dark;
-  --vk-bg: #101317;
-  --vk-surface-1: #191f24;
-  --vk-surface-2: #222a30;
-  --vk-surface-3: #2c353c;
-  --vk-border-subtle: #343d44;
-  --vk-border-strong: #53616b;
-  --vk-border-control: #687a87;
-  --vk-text-primary: #f1f3f4;
-  --vk-text-secondary: #b2bdc5;
-  --vk-text-muted: #8996a1;
-  --vk-accent: #b5f277;
-  --vk-accent-ink: #101317;
-  --vk-success: #69d8a0;
-  --vk-warning: #f2c66d;
-  --vk-critical: #f17d83;
-  --vk-info: #7db9f2;
-  --vk-unknown: #8995a0;
-  --vk-series-cpu: #7db9f2;
-  --vk-series-memory: #69d8c9;
-  --vk-series-storage: #f2c66d;
-  --vk-series-rx: #7db9f2;
-  --vk-series-tx: #c2a5f4;
+  --vk-bg: #09090b;
+  --vk-surface-1: #121214;
+  --vk-surface-2: #18181b;
+  --vk-surface-3: #27272a;
+  --vk-popover: #141417;
+  --vk-border-subtle: #242428;
+  --vk-border-strong: #3f3f46;
+  --vk-border-control: #323238;
+  --vk-text-primary: #fafafa;
+  --vk-text-secondary: #a1a1aa;
+  --vk-text-muted: #90909a;
+  --vk-accent: #fafafa;
+  --vk-accent-hover: #e4e4e7;
+  --vk-accent-ink: #09090b;
+  --vk-focus: #d4d4d8;
+  --vk-success: #4ade80;
+  --vk-success-fill: #22c55e;
+  --vk-warning: #fbbf24;
+  --vk-warning-fill: #eab308;
+  --vk-critical: #f87171;
+  --vk-critical-fill: #ef4444;
+  --vk-info: #60a5fa;
+  --vk-unknown: #90909a;
+  --vk-series-cpu: #3b82f6;
+  --vk-series-memory: #22c55e;
+  --vk-series-storage: #a855f7;
+  --vk-series-disk-io: #f59e0b;
+  --vk-series-rx: #22c55e;
+  --vk-series-tx: #ec4899;
+  --vk-series-sensor: #f97316;
+  --vk-shadow-sm: 0 1px 2px rgb(0 0 0 / 35%);
+  --vk-shadow-md: 0 10px 30px rgb(0 0 0 / 48%);
   --vk-radius-0: 0px;
-  --vk-radius-1: 2px;
-  --vk-radius-2: 4px;
+  --vk-radius-1: 6px;
+  --vk-radius-2: 8px;
+  --vk-radius-3: 12px;
+  --vk-radius-pill: 9999px;
   --vk-stroke-1: 1px;
   --vk-stroke-2: 2px;
   --vk-space-1: 4px;
@@ -49,18 +61,53 @@
   --vk-space-8: 32px;
   --vk-space-10: 40px;
   --vk-space-12: 48px;
-  --vk-font: "Geist Variable", system-ui, sans-serif;
+  --vk-font: "Geist Variable", system-ui, -apple-system, sans-serif;
   --vk-mono: "Geist Mono Variable", ui-monospace, monospace;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --vk-bg: #f4f4f5;
+  --vk-surface-1: #ffffff;
+  --vk-surface-2: #f4f4f5;
+  --vk-surface-3: #e4e4e7;
+  --vk-popover: #ffffff;
+  --vk-border-subtle: #e4e4e7;
+  --vk-border-strong: #d4d4d8;
+  --vk-border-control: #d4d4d8;
+  --vk-text-primary: #09090b;
+  --vk-text-secondary: #52525b;
+  --vk-text-muted: #5c5c66;
+  --vk-accent: #18181b;
+  --vk-accent-hover: #27272a;
+  --vk-accent-ink: #fafafa;
+  --vk-focus: #18181b;
+  --vk-success: #15803d;
+  --vk-success-fill: #22c55e;
+  --vk-warning: #a16207;
+  --vk-warning-fill: #eab308;
+  --vk-critical: #dc2626;
+  --vk-critical-fill: #ef4444;
+  --vk-info: #2563eb;
+  --vk-unknown: #63636e;
+  --vk-shadow-sm: 0 1px 2px rgb(0 0 0 / 6%);
+  --vk-shadow-md: 0 10px 30px rgb(0 0 0 / 12%);
 }
 @layer reset {
   *, *::before, *::after { box-sizing: border-box; }
-  body { margin: 0; background: var(--vk-bg); color: var(--vk-text-primary); font: 14px/21px var(--vk-font); }
+  body {
+    margin: 0;
+    background: var(--vk-bg);
+    color: var(--vk-text-primary);
+    font: 14px/21px var(--vk-font);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
   h1, h2, h3, p, dl, dd { margin: 0; }
   button, input, select { font: inherit; }
   a { color: inherit; }
-  :focus-visible { outline: var(--vk-stroke-2) solid var(--vk-accent); outline-offset: 2px; }
+  :focus-visible { outline: var(--vk-stroke-2) solid var(--vk-focus); outline-offset: 2px; }
   ::selection { background: var(--vk-accent); color: var(--vk-accent-ink); }
-  dialog::backdrop { background: rgb(0 0 0 / 70%); }
+  dialog::backdrop { background: rgb(0 0 0 / 65%); backdrop-filter: blur(4px); }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }

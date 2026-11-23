@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "bun --bun vite --configLoader native",
+    "dev:demo": "VITE_DEMO_MODE=true bun --bun vite --configLoader native",
     "build": "bun run typecheck && bun --bun vite build --configLoader native",
+    "build:demo": "VITE_DEMO_MODE=true bun run build",
     "typecheck": "bun --bun tsc --noEmit",
     "lint": "bun --bun eslint .",
     "test": "bun --bun vitest run --configLoader native --pool threads",

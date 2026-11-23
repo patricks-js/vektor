@@ -12,17 +12,18 @@ import { SettingsPage } from '../features/settings/SettingsPage'
 import { ApiError, createApi } from '../lib/api/client'
 import type { Session } from '../lib/api/client'
 import { ApiContext } from '../lib/api/queries'
+import { createDemoApi, createDemoLiveStore, isDemoMode } from '../lib/demo/mock'
 import { LiveContext } from '../lib/realtime/hooks'
 import { createLiveStore } from '../lib/realtime/store'
-import { PreferencesContext, isRange, readPreference, writePreference } from './preferences'
-import type { TimeRange } from './preferences'
+import { PreferencesContext, isRange, isTheme, readPreference, writePreference } from './preferences'
+import type { Theme, TimeRange } from './preferences'
 import { returnPath } from './routes'
 import { Shell } from './Shell'
 
 type Auth = { state: 'checking' } | { state: 'guest'; expired: boolean }
   | { state: 'active'; session: Session } | { state: 'error'; error: unknown }
 
-const authApi = createApi()
+const authApi = isDemoMode ? createDemoApi() : createApi()
 
 function OverviewRedirect() {
   const link = usePeriodLink()
@@ -34,8 +35,8 @@ function ActiveRoutes({ session, expire, logout }: {
   expire: () => void
   logout: () => void
 }) {
-  const [api] = useState(() => createApi(expire))
-  const [stream] = useState(createLiveStore)
+  const [api] = useState(() => isDemoMode ? createDemoApi(expire) : createApi(expire))
+  const [stream] = useState(() => isDemoMode ? createDemoLiveStore() : createLiveStore())
   const [cache] = useState(() => new QueryClient({
     defaultOptions: {
       queries: {
@@ -155,16 +156,27 @@ function Application() {
 }
 
 export function App() {
-  const [collapsed, setCollapsed] = useState(() => readPreference('sidebar') === 'collapsed')
+  const [singleColumn, setSingleColumn] = useState(() => readPreference('layout') === 'single')
+  const [theme, setTheme] = useState<Theme>(() => {
+    const saved = readPreference('theme')
+    return isTheme(saved) ? saved : 'dark'
+  })
   const [defaultRange, setDefaultRange] = useState<TimeRange>(() => {
     const saved = readPreference('range')
     return isRange(saved) ? saved : '1h'
   })
+
+  useEffect(() => {
+    if (theme === 'light') document.documentElement.dataset.theme = 'light'
+    else delete document.documentElement.dataset.theme
+  }, [theme])
+
   return (
     <BrowserRouter>
       <PreferencesContext.Provider value={{
-        collapsed, defaultRange,
-        setCollapsed: value => { setCollapsed(value); return writePreference('sidebar', value ? 'collapsed' : 'expanded') },
+        singleColumn, theme, defaultRange,
+        setSingleColumn: value => { setSingleColumn(value); return writePreference('layout', value ? 'single' : 'grid') },
+        setTheme: value => { setTheme(value); return writePreference('theme', value) },
         setDefaultRange: value => { setDefaultRange(value); return writePreference('range', value) },
       }}>
         <Application />

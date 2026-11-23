@@ -6,58 +6,72 @@ import type { ButtonHTMLAttributes, ComponentPropsWithRef, ReactNode, SelectHTML
 import { ApiError } from '../../lib/api/client'
 
 export const layout = stylex.create({
-  page: { display: 'grid', gap: 24, minWidth: 0 },
+  page: { display: 'grid', gap: 16, minWidth: 0 },
   stack: { display: 'grid', gap: 16, minWidth: 0 },
-  compact: { display: 'grid', gap: 8, minWidth: 0 },
-  row: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12, minWidth: 0 },
+  compact: { display: 'grid', gap: 6, minWidth: 0 },
+  row: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, minWidth: 0 },
   split: { display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
   text: { color: 'var(--vk-text-secondary)', overflowWrap: 'anywhere' },
   small: { color: 'var(--vk-text-secondary)', fontSize: 13, lineHeight: '19px', overflowWrap: 'anywhere' },
   technical: { fontFamily: 'var(--vk-mono)', fontSize: 12, lineHeight: '16px', fontWeight: 500, overflowWrap: 'anywhere' },
   muted: { color: 'var(--vk-text-muted)' },
   grid2: { display: 'grid', gap: 16, gridTemplateColumns: { default: 'minmax(0, 1fr)', '@media (min-width: 1024px)': 'repeat(2, minmax(0, 1fr))' } },
-  grid4: { display: 'grid', gap: 16, gridTemplateColumns: { default: 'minmax(0, 1fr)', '@media (min-width: 560px)': 'repeat(2, minmax(0, 1fr))', '@media (min-width: 1440px)': 'repeat(4, minmax(0, 1fr))' } },
-  sectionTitle: { fontSize: 18, lineHeight: '26px', fontWeight: 600 },
-  pageTitle: { fontSize: 28, lineHeight: '34px', fontWeight: 600, letterSpacing: '-0.025em', overflowWrap: 'anywhere' },
+  grid1: { display: 'grid', gap: 16, gridTemplateColumns: 'minmax(0, 1fr)' },
+  grid4: { display: 'grid', gap: 16, gridTemplateColumns: { default: 'minmax(0, 1fr)', '@media (min-width: 560px)': 'repeat(2, minmax(0, 1fr))', '@media (min-width: 1200px)': 'repeat(4, minmax(0, 1fr))' } },
+  sectionTitle: { fontSize: 17, lineHeight: '24px', fontWeight: 600, letterSpacing: '-0.015em', color: 'var(--vk-text-primary)' },
+  pageTitle: { fontSize: 24, lineHeight: '30px', fontWeight: 600, letterSpacing: '-0.025em', overflowWrap: 'anywhere', color: 'var(--vk-text-primary)' },
 })
 
 const ui = stylex.create({
   button: {
-    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, paddingInline: 12,
-    minHeight: { default: 40, '@media (pointer: coarse)': 44 }, borderWidth: 1, borderStyle: 'solid',
-    fontWeight: 600, borderRadius: 'var(--vk-radius-0)', cursor: 'pointer',
-    textDecoration: 'none', transition: 'background-color 150ms, border-color 150ms',
-    opacity: { default: 1, ':disabled': 0.6 },
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, paddingInline: 14,
+    minHeight: { default: 36, '@media (pointer: coarse)': 44 }, borderWidth: 1, borderStyle: 'solid',
+    fontWeight: 500, fontSize: 13, borderRadius: 'var(--vk-radius-2)', cursor: 'pointer',
+    textDecoration: 'none', transition: 'background-color 150ms, border-color 150ms, color 150ms',
+    opacity: { default: 1, ':disabled': 0.5 },
   },
   primary: {
-    backgroundColor: { default: 'var(--vk-accent)', ':hover': 'var(--vk-success)' },
-    color: 'var(--vk-accent-ink)', borderColor: 'var(--vk-accent)',
+    backgroundColor: { default: 'var(--vk-accent)', ':hover': 'var(--vk-accent-hover)' },
+    color: 'var(--vk-accent-ink)', borderColor: 'var(--vk-accent)', fontWeight: 600,
   },
   outline: {
-    backgroundColor: { default: 'var(--vk-surface-2)', ':hover': 'var(--vk-surface-3)' },
+    backgroundColor: { default: 'var(--vk-surface-1)', ':hover': 'var(--vk-surface-3)' },
     color: 'var(--vk-text-primary)', borderColor: 'var(--vk-border-control)',
   },
   quiet: {
     backgroundColor: { default: 'transparent', ':hover': 'var(--vk-surface-3)' },
-    color: 'var(--vk-text-secondary)', borderColor: 'transparent',
+    color: { default: 'var(--vk-text-secondary)', ':hover': 'var(--vk-text-primary)' },
+    borderColor: 'transparent',
   },
   danger: {
     backgroundColor: { default: 'transparent', ':hover': 'var(--vk-surface-3)' },
     color: 'var(--vk-critical)', borderColor: 'var(--vk-critical)',
   },
   field: {
-    display: 'block', width: '100%', minHeight: { default: 40, '@media (pointer: coarse)': 44 }, padding: '8px 12px',
-    borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--vk-border-control)', borderRadius: 'var(--vk-radius-1)',
-    backgroundColor: 'var(--vk-bg)', color: 'var(--vk-text-primary)',
-    fontVariantNumeric: 'tabular-nums', minWidth: 0,
+    display: 'block', width: '100%', minHeight: { default: 38, '@media (pointer: coarse)': 44 }, paddingBlock: 7, paddingInline: 12,
+    borderWidth: 1, borderStyle: 'solid', borderColor: { default: 'var(--vk-border-control)', ':hover': 'var(--vk-border-strong)' },
+    borderRadius: 'var(--vk-radius-2)', backgroundColor: 'var(--vk-bg)', color: 'var(--vk-text-primary)',
+    fontVariantNumeric: 'tabular-nums', fontSize: 13, minWidth: 0, transition: 'border-color 150ms',
   },
   invalid: { borderColor: 'var(--vk-critical)' },
-  fieldGroup: { display: 'grid', gap: 8, minWidth: 0 },
-  fieldLabel: { fontWeight: 600 },
-  fieldWithAction: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 4 },
-  panel: { display: 'grid', gap: 16, alignContent: 'start', minWidth: 0, backgroundColor: 'var(--vk-surface-1)', borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--vk-border-subtle)', padding: { default: 16, '@media (min-width: 1024px)': 20 } },
-  emphasized: { borderWidth: 2, borderStyle: 'solid', borderColor: 'var(--vk-border-strong)' },
-  badge: { display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12, fontWeight: 600, lineHeight: '18px' },
+  fieldGroup: { display: 'grid', gap: 6, minWidth: 0 },
+  fieldLabel: { fontWeight: 500, fontSize: 13, color: 'var(--vk-text-primary)' },
+  fieldWithAction: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 6 },
+  panel: {
+    display: 'grid', gap: 16, alignContent: 'start', minWidth: 0,
+    backgroundColor: 'var(--vk-surface-1)', borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--vk-border-subtle)',
+    borderRadius: 'var(--vk-radius-3)', padding: { default: 16, '@media (min-width: 1024px)': 20 },
+  },
+  emphasized: { borderColor: 'var(--vk-border-strong)' },
+  panelHead: { display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 },
+  panelTitles: { display: 'grid', gap: 2, minWidth: 0 },
+  badge: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 500, lineHeight: '18px' },
+  dot: { width: 8, height: 8, borderRadius: 'var(--vk-radius-pill)', flexShrink: 0, display: 'inline-block' },
+  dotSuccess: { backgroundColor: 'var(--vk-success-fill)' },
+  dotWarning: { backgroundColor: 'var(--vk-warning-fill)' },
+  dotCritical: { backgroundColor: 'var(--vk-critical-fill)' },
+  dotNeutral: { backgroundColor: 'var(--vk-unknown)' },
+  dotInfo: { backgroundColor: 'var(--vk-info)' },
   success: { color: 'var(--vk-success)' },
   warning: { color: 'var(--vk-warning)' },
   critical: { color: 'var(--vk-critical)' },
@@ -65,19 +79,49 @@ const ui = stylex.create({
   info: { color: 'var(--vk-info)' },
   state: { display: 'flex', alignItems: 'flex-start', gap: 12, color: 'var(--vk-text-secondary)' },
   stateIcon: { flexShrink: 0, marginTop: 2 },
-  skeleton: { minHeight: 12, backgroundColor: 'var(--vk-surface-3)', width: '62%', marginBlock: 4 },
+  skeleton: { minHeight: 10, borderRadius: 'var(--vk-radius-pill)', backgroundColor: 'var(--vk-surface-3)', width: '62%', marginBlock: 4 },
   skeletonShort: { width: '38%' },
-  brand: { display: 'inline-flex', alignItems: 'center', gap: 10, fontSize: 21, fontWeight: 700, letterSpacing: '-0.045em', lineHeight: '26px' },
-  mark: { display: 'grid', placeItems: 'center', width: 32, height: 32, backgroundColor: 'var(--vk-accent)', color: 'var(--vk-accent-ink)', flexShrink: 0 },
-  dialog: { backgroundColor: 'var(--vk-surface-1)', color: 'var(--vk-text-primary)', borderWidth: 2, borderStyle: 'solid', borderColor: 'var(--vk-border-strong)', borderRadius: 'var(--vk-radius-2)', width: 'min(440px, calc(100% - 32px))', padding: 24 },
+  brand: {
+    display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 19, fontWeight: 700,
+    letterSpacing: '-0.04em', lineHeight: '24px', color: 'var(--vk-text-primary)',
+  },
+  mark: {
+    display: 'grid', placeItems: 'center', width: 26, height: 26, borderRadius: 'var(--vk-radius-1)',
+    backgroundColor: 'var(--vk-accent)', color: 'var(--vk-accent-ink)', flexShrink: 0,
+  },
+  dialog: {
+    backgroundColor: 'var(--vk-surface-1)', color: 'var(--vk-text-primary)',
+    borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--vk-border-strong)',
+    borderRadius: 'var(--vk-radius-3)', width: 'min(440px, calc(100% - 32px))', padding: 24,
+    boxShadow: 'var(--vk-shadow-md)',
+  },
   link: {
-    display: 'inline-flex', alignItems: 'center', gap: 6, minHeight: { default: 24, '@media (pointer: coarse)': 44 },
-    color: 'var(--vk-accent)', textUnderlineOffset: 4,
+    display: 'inline-flex', alignItems: 'center', gap: 4, minHeight: { default: 28, '@media (pointer: coarse)': 44 },
+    color: { default: 'var(--vk-text-secondary)', ':hover': 'var(--vk-text-primary)' },
+    fontSize: 13, fontWeight: 500, textDecoration: 'none', transition: 'color 150ms',
+  },
+  source: {
+    display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 500,
+    color: 'var(--vk-text-secondary)', backgroundColor: 'var(--vk-surface-2)',
+    borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--vk-border-subtle)',
+    borderRadius: 'var(--vk-radius-1)', paddingBlock: 3, paddingInline: 8,
   },
 })
 
 type Tone = 'success' | 'warning' | 'critical' | 'neutral' | 'info'
 type Variant = 'primary' | 'outline' | 'quiet' | 'danger'
+
+const dotTone = {
+  success: ui.dotSuccess,
+  warning: ui.dotWarning,
+  critical: ui.dotCritical,
+  neutral: ui.dotNeutral,
+  info: ui.dotInfo,
+} as const
+
+export function StatusDot({ tone }: { tone: Tone }) {
+  return <span aria-hidden {...stylex.props(ui.dot, dotTone[tone])} />
+}
 
 export function Button({ variant = 'outline', busy, children, disabled, type = 'button', ...props }: ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: Variant
@@ -85,7 +129,7 @@ export function Button({ variant = 'outline', busy, children, disabled, type = '
 }) {
   return (
     <button {...stylex.props(ui.button, ui[variant])} {...props} type={type} disabled={busy || disabled} aria-busy={busy || undefined}>
-      {busy && <LoaderCircle size={16} aria-hidden />}
+      {busy && <LoaderCircle size={15} aria-hidden />}
       {children}
     </button>
   )
@@ -94,7 +138,7 @@ export function Button({ variant = 'outline', busy, children, disabled, type = '
 export function Brand({ markOnly = false }: { markOnly?: boolean }) {
   return (
     <span {...stylex.props(ui.brand)} role={markOnly ? 'img' : undefined} aria-label={markOnly ? 'Vektor' : undefined}>
-      <span {...stylex.props(ui.mark)}><MoveUpRight size={21} strokeWidth={2.5} aria-hidden /></span>
+      <span {...stylex.props(ui.mark)}><MoveUpRight size={16} strokeWidth={2.5} aria-hidden /></span>
       {!markOnly && 'Vektor'}
     </span>
   )
@@ -127,17 +171,33 @@ export function SelectField({ label, children, ...props }: SelectHTMLAttributes<
   )
 }
 
-export function Panel({ title, action, children, emphasized }: { title?: string; action?: ReactNode; children: ReactNode; emphasized?: boolean }) {
+export function Panel({ title, subtitle, action, children, emphasized }: {
+  title?: string
+  subtitle?: ReactNode
+  action?: ReactNode
+  children: ReactNode
+  emphasized?: boolean
+}) {
   const id = useId()
   return (
     <section {...stylex.props(ui.panel, emphasized && ui.emphasized)} aria-labelledby={title ? id : undefined}>
-      {title && <div {...stylex.props(layout.split)}><h2 id={id} {...stylex.props(layout.sectionTitle)}>{title}</h2>{action}</div>}
+      {(title || action) && (
+        <div {...stylex.props(ui.panelHead)}>
+          {title && (
+            <div {...stylex.props(ui.panelTitles)}>
+              <h2 id={id} {...stylex.props(layout.sectionTitle)}>{title}</h2>
+              {subtitle && <p {...stylex.props(layout.small)}>{subtitle}</p>}
+            </div>
+          )}
+          {action}
+        </div>
+      )}
       {children}
     </section>
   )
 }
 
-export function Badge({ tone, icon, children, announce }: { tone: Tone; icon: ReactNode; children: ReactNode; announce?: boolean }) {
+export function Badge({ tone, icon, children, announce }: { tone: Tone; icon?: ReactNode; children: ReactNode; announce?: boolean }) {
   return <span {...stylex.props(ui.badge, ui[tone])} role={announce ? 'status' : undefined}>{icon}{children}</span>
 }
 
@@ -200,5 +260,5 @@ export function Modal({ title, open, onClose, children, preventClose }: { title:
 }
 
 export function Source({ children }: { children: ReactNode }) {
-  return <span {...stylex.props(ui.badge, ui.neutral)}><Database size={13} aria-hidden />{children}</span>
+  return <span {...stylex.props(ui.source)}><Database size={12} aria-hidden />{children}</span>
 }

@@ -13,16 +13,23 @@ export const rangeMs: Record<TimeRange, number> = {
 }
 
 const s = stylex.create({
-  group: { display: 'flex', width: 'fit-content', maxWidth: '100%', flexWrap: 'wrap', gap: 2, padding: 3, borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--vk-border-control)', backgroundColor: 'var(--vk-surface-1)' },
-  icon: { alignSelf: 'center', color: 'var(--vk-text-muted)', marginInline: 8, display: { default: 'none', '@media (min-width: 560px)': 'block' } },
+  group: {
+    display: 'flex', width: 'fit-content', maxWidth: '100%', flexWrap: 'wrap', gap: 2, padding: 3,
+    borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--vk-border-subtle)',
+    borderRadius: 'var(--vk-radius-2)', backgroundColor: 'var(--vk-surface-2)',
+  },
+  icon: { alignSelf: 'center', color: 'var(--vk-text-muted)', marginInline: 6, display: { default: 'none', '@media (min-width: 560px)': 'block' } },
   option: {
-    cursor: 'pointer', borderWidth: 1, borderStyle: 'solid', borderColor: 'transparent', color: 'var(--vk-text-secondary)',
+    cursor: 'pointer', borderWidth: 1, borderStyle: 'solid', borderColor: 'transparent',
+    borderRadius: 'var(--vk-radius-1)', color: { default: 'var(--vk-text-secondary)', ':hover': 'var(--vk-text-primary)' },
     backgroundColor: { default: 'transparent', ':hover': 'var(--vk-surface-3)' },
-    minWidth: 38, minHeight: { default: 34, '@media (pointer: coarse)': 44 },
-    fontWeight: 600, fontVariantNumeric: 'tabular-nums', paddingInline: 6,
+    minWidth: 36, minHeight: { default: 30, '@media (pointer: coarse)': 44 },
+    fontSize: 12, fontWeight: 500, fontVariantNumeric: 'tabular-nums', paddingInline: 8,
+    transition: 'background-color 150ms, color 150ms, border-color 150ms',
   },
   selected: {
-    backgroundColor: 'var(--vk-surface-3)', borderColor: 'var(--vk-accent)', color: 'var(--vk-accent)',
+    backgroundColor: 'var(--vk-surface-1)', borderColor: 'var(--vk-border-strong)',
+    color: 'var(--vk-text-primary)', fontWeight: 600,
   },
 })
 
@@ -93,9 +100,8 @@ export function TimeRangeSelector() {
   return (
     <div {...stylex.props(layout.compact)}>
       <div {...stylex.props(layout.row)} role="group" aria-label="Período histórico">
-        <span {...stylex.props(layout.small)}>Período</span>
         <div {...stylex.props(s.group)}>
-          <CalendarClock size={15} aria-hidden {...stylex.props(s.icon)} />
+          <CalendarClock size={14} aria-hidden {...stylex.props(s.icon)} />
           {ranges.map(option => (
             <button type="button" key={option} aria-pressed={range === option}
               {...stylex.props(s.option, range === option && s.selected)}
