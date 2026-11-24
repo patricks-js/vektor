@@ -8,7 +8,7 @@ import (
 	"net/http"
 )
 
-//go:embed dist/index.html dist/assets/*
+//go:embed dist/index.html dist/favicon.svg dist/assets/*
 var assets embed.FS
 
 func Handler() http.Handler {

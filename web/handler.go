@@ -19,6 +19,16 @@ func handler(dist fs.FS) http.Handler {
 		}
 
 		w.Header().Set("Content-Security-Policy", policy)
+		if r.URL.Path == "/favicon.svg" {
+			info, err := fs.Stat(dist, "favicon.svg")
+			if err != nil || !info.Mode().IsRegular() {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Cache-Control", "public, max-age=86400")
+			files.ServeHTTP(w, r)
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/assets/") {
 			name := strings.TrimPrefix(r.URL.Path, "/")
 			if strings.Count(name, "/") != 1 {

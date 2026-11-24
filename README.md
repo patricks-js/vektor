@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/vektor-banner.png" alt="Vektor" width="100%" />
+</p>
+
 # Vektor
 
 Lightweight, native-first Linux host monitoring, operations, and **Incus** virtualization platform. Vektor serves a modern embedded dashboard, authenticated REST API, and live SSE stream from a single static Go binary (`vektord`), paired with a minimal socket-activated privileged helper (`vektor-ctl`).

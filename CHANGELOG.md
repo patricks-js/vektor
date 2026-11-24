@@ -6,6 +6,9 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o 
 
 ## [Unreleased]
 
+### Added
+- Nova identidade visual do Vektor (`assets/vektor-banner.png`, `assets/vektor-logo.png`, `assets/vektor-mark*.svg`), `favicon.svg` servido pelo handler embarcado e novo ícone vetorial na marca da barra superior.
+
 ## [0.7.1] - 2026-11-24
 
 ### Fixed

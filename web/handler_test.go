@@ -11,6 +11,7 @@ import (
 func TestDashboardRouting(t *testing.T) {
 	ui := handler(fstest.MapFS{
 		"index.html":         {Data: []byte("<html>Vektor</html>")},
+		"favicon.svg":        {Data: []byte("<svg></svg>")},
 		"assets/app-hash.js": {Data: []byte("export {}")},
 	})
 	for _, path := range []string{"/", "/login", "/overview", "/host", "/host/cpu", "/host/memory", "/host/storage", "/host/network", "/host/sensors", "/host/services", "/host/processes", "/settings"} {
@@ -38,6 +39,11 @@ func TestDashboardRouting(t *testing.T) {
 		if w.Code != http.StatusNotFound {
 			t.Fatalf("%s: expected 404, got %d", path, w.Code)
 		}
+	}
+	w = httptest.NewRecorder()
+	ui.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/favicon.svg", nil))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "<svg>") {
+		t.Fatalf("unexpected favicon response: %d %q", w.Code, w.Body.String())
 	}
 	w = httptest.NewRecorder()
 	ui.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/login", nil))

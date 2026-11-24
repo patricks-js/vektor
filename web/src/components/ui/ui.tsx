@@ -1,5 +1,5 @@
 import * as stylex from '@stylexjs/stylex'
-import { AlertCircle, ArrowUpRight, Box, Database, LoaderCircle, MoveUpRight, X } from 'lucide-react'
+import { AlertCircle, ArrowUpRight, Box, Database, LoaderCircle, X } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useEffect, useId, useRef } from 'react'
 import type { ButtonHTMLAttributes, ComponentPropsWithRef, ReactNode, SelectHTMLAttributes } from 'react'
@@ -109,8 +109,8 @@ const ui = stylex.create({
     letterSpacing: '-0.04em', lineHeight: '24px', color: 'var(--vk-text-primary)',
   },
   mark: {
-    display: 'grid', placeItems: 'center', width: 26, height: 26, borderRadius: 'var(--vk-radius-1)',
-    backgroundColor: 'var(--vk-accent)', color: 'var(--vk-accent-ink)', flexShrink: 0,
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    width: 24, height: 24, flexShrink: 0,
   },
   dialog: {
     backgroundColor: 'var(--vk-surface-1)', color: 'var(--vk-text-primary)',
@@ -161,7 +161,12 @@ export function Button({ variant = 'outline', busy, children, disabled, type = '
 export function Brand({ markOnly = false }: { markOnly?: boolean }) {
   return (
     <span {...stylex.props(ui.brand)} role={markOnly ? 'img' : undefined} aria-label={markOnly ? 'Vektor' : undefined}>
-      <span {...stylex.props(ui.mark)}><MoveUpRight size={16} strokeWidth={2.5} aria-hidden /></span>
+      <span {...stylex.props(ui.mark)} aria-hidden>
+        <svg viewBox="16 14 100 100" width="24" height="24" fill="none">
+          <path fill="currentColor" d="M20 37H33.5L55 72.8L76.5 37H93.5L100.7 49L63 110.5L56.5 99.7L88 47.5H82.5L54.5 94L20 37Z" />
+          <path fill="var(--vk-success)" d="M85.5 33.5L111.5 18L101.5 43.5L97 34.5Z" />
+        </svg>
+      </span>
       {!markOnly && 'Vektor'}
     </span>
   )
