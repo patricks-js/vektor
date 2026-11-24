@@ -303,3 +303,194 @@ func (a *API) listIncusResources(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, res)
 }
+
+func (a *API) updateIncusInstance(w http.ResponseWriter, r *http.Request) {
+	if !requireCSRF(w, r) {
+		return
+	}
+	if _, ok := queryValues(w, r); !ok {
+		return
+	}
+	name := r.PathValue("name")
+	if !incus.ValidInstanceName(name) {
+		invalidParams(w, "Invalid instance name")
+		return
+	}
+	var body incus.UpdateInstanceRequest
+	if !decodeJSONBody(w, r, &body) {
+		return
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		invalidParams(w, "Invalid update payload")
+		return
+	}
+	a.executeControl(w, r, ctl.Request{
+		Action:  "incus.instance.update",
+		Target:  name,
+		Payload: payload,
+	}, "incus:"+name)
+}
+
+func (a *API) execIncusInstance(w http.ResponseWriter, r *http.Request) {
+	if !requireCSRF(w, r) {
+		return
+	}
+	if _, ok := queryValues(w, r); !ok {
+		return
+	}
+	name := r.PathValue("name")
+	if !incus.ValidInstanceName(name) {
+		invalidParams(w, "Invalid instance name")
+		return
+	}
+	var body incus.ExecRequest
+	if !decodeJSONBody(w, r, &body) {
+		return
+	}
+	if body.Command == "" || len(body.Command) > 4096 {
+		invalidParams(w, "command must be between 1 and 4096 characters")
+		return
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		invalidParams(w, "Invalid exec payload")
+		return
+	}
+	if a.ctl == nil {
+		writeError(w, http.StatusServiceUnavailable, "ctl_unavailable", "vektor-ctl helper is not configured")
+		return
+	}
+	resp, err := a.ctl.Do(r.Context(), ctl.Request{
+		Action:  "incus.instance.exec",
+		Target:  name,
+		Payload: payload,
+	})
+	if errors.Is(err, ctl.ErrUnavailable) {
+		a.recordAudit(r, "incus.instance.exec", "incus:"+name, "error", "helper socket unavailable")
+		writeError(w, http.StatusServiceUnavailable, "ctl_unavailable", "vektor-ctl.socket is not active on this host")
+		return
+	}
+	if err != nil {
+		a.recordAudit(r, "incus.instance.exec", "incus:"+name, "error", err.Error())
+		writeError(w, http.StatusBadGateway, "ctl_error", "Failed to communicate with vektor-ctl")
+		return
+	}
+	if !resp.OK {
+		a.recordAudit(r, "incus.instance.exec", "incus:"+name, "error", resp.Error)
+		writeError(w, http.StatusUnprocessableEntity, "action_failed", resp.Error)
+		return
+	}
+	auditCmd := body.Command
+	if len(auditCmd) > 120 {
+		auditCmd = auditCmd[:120] + "…"
+	}
+	a.recordAudit(r, "incus.instance.exec", "incus:"+name, "ok", auditCmd+" ("+resp.Message+")")
+	var result incus.ExecResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		writeError(w, http.StatusBadGateway, "incus_error", "Malformed exec result")
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (a *API) incusConsoleLog(w http.ResponseWriter, r *http.Request) {
+	if _, ok := queryValues(w, r); !ok {
+		return
+	}
+	name := r.PathValue("name")
+	if !incus.ValidInstanceName(name) {
+		invalidParams(w, "Invalid instance name")
+		return
+	}
+	raw, ok := a.callIncusRead(w, r, ctl.Request{Action: "incus.instance.console", Target: name})
+	if !ok {
+		return
+	}
+	var out struct {
+		Log string `json:"log"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		writeError(w, http.StatusBadGateway, "incus_error", "Malformed console payload")
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (a *API) listIncusBackups(w http.ResponseWriter, r *http.Request) {
+	if _, ok := queryValues(w, r); !ok {
+		return
+	}
+	name := r.PathValue("name")
+	if !incus.ValidInstanceName(name) {
+		invalidParams(w, "Invalid instance name")
+		return
+	}
+	raw, ok := a.callIncusRead(w, r, ctl.Request{Action: "incus.backups.list", Target: name})
+	if !ok {
+		return
+	}
+	var backups []incus.Backup
+	if err := json.Unmarshal(raw, &backups); err != nil {
+		writeError(w, http.StatusBadGateway, "incus_error", "Malformed backups payload")
+		return
+	}
+	if backups == nil {
+		backups = []incus.Backup{}
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Backups []incus.Backup `json:"backups"`
+	}{Backups: backups})
+}
+
+func (a *API) createIncusBackup(w http.ResponseWriter, r *http.Request) {
+	if !requireCSRF(w, r) {
+		return
+	}
+	if _, ok := queryValues(w, r); !ok {
+		return
+	}
+	name := r.PathValue("name")
+	if !incus.ValidInstanceName(name) {
+		invalidParams(w, "Invalid instance name")
+		return
+	}
+	var body incus.CreateBackupRequest
+	if !decodeJSONBody(w, r, &body) {
+		return
+	}
+	if !incus.ValidSnapshotName(body.Name) {
+		invalidParams(w, "Invalid backup name")
+		return
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		invalidParams(w, "Invalid backup payload")
+		return
+	}
+	a.executeControl(w, r, ctl.Request{
+		Action:  "incus.backup.create",
+		Target:  name,
+		Payload: payload,
+	}, "incus:"+name+"/backup:"+body.Name)
+}
+
+func (a *API) deleteIncusBackup(w http.ResponseWriter, r *http.Request) {
+	if !requireCSRF(w, r) {
+		return
+	}
+	if _, ok := queryValues(w, r); !ok {
+		return
+	}
+	name := r.PathValue("name")
+	backup := r.PathValue("backup")
+	if !incus.ValidInstanceName(name) || !incus.ValidSnapshotName(backup) {
+		invalidParams(w, "Invalid instance or backup name")
+		return
+	}
+	a.executeControl(w, r, ctl.Request{
+		Action: "incus.backup.delete",
+		Target: name,
+		Signal: backup,
+	}, "incus:"+name+"/backup:"+backup)
+}

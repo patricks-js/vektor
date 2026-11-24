@@ -97,31 +97,58 @@ func (c *Client) do(ctx context.Context, method, endpoint string, body any) (api
 	return env, nil
 }
 
-func (c *Client) waitOperation(ctx context.Context, opPath string) error {
+func (c *Client) doRaw(ctx context.Context, method, endpoint string, maxBytes int64) (string, int, error) {
+	req, err := http.NewRequestWithContext(ctx, method, "http://unix"+endpoint, nil)
+	if err != nil {
+		return "", 0, err
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) || strings.Contains(err.Error(), "no such file or directory") || strings.Contains(err.Error(), "connection refused") {
+			return "", 0, fmt.Errorf("%w: %v", ErrUnavailable, err)
+		}
+		return "", 0, err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes))
+	if err != nil {
+		return "", resp.StatusCode, err
+	}
+	return string(raw), resp.StatusCode, nil
+}
+
+func (c *Client) waitOperationMetadata(ctx context.Context, opPath string) (json.RawMessage, error) {
 	if opPath == "" {
-		return nil
+		return nil, nil
 	}
 	if !strings.HasPrefix(opPath, "/") {
 		opPath = "/1.0/operations/" + url.PathEscape(opPath)
 	}
 	env, err := c.do(ctx, http.MethodGet, opPath+"/wait?timeout=120", nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var op struct {
-		Status     string `json:"status"`
-		StatusCode int    `json:"status_code"`
-		Err        string `json:"err"`
+		Status     string          `json:"status"`
+		StatusCode int             `json:"status_code"`
+		Err        string          `json:"err"`
+		Metadata   json.RawMessage `json:"metadata"`
 	}
 	if len(env.Metadata) > 0 && json.Unmarshal(env.Metadata, &op) == nil {
 		if op.Err != "" {
-			return errors.New(op.Err)
+			return nil, errors.New(op.Err)
 		}
 		if op.StatusCode >= 400 {
-			return fmt.Errorf("incus operation failed: %s", op.Status)
+			return nil, fmt.Errorf("incus operation failed: %s", op.Status)
 		}
+		return op.Metadata, nil
 	}
-	return nil
+	return nil, nil
+}
+
+func (c *Client) waitOperation(ctx context.Context, opPath string) error {
+	_, err := c.waitOperationMetadata(ctx, opPath)
+	return err
 }
 
 func (c *Client) Status(ctx context.Context) (Status, error) {
@@ -229,6 +256,7 @@ func mapRawInstance(r rawInstance) Instance {
 		Profiles:       nonNilStrings(r.Profiles),
 		CPULimit:       cfg["limits.cpu"],
 		MemoryLimit:    cfg["limits.memory"],
+		Autostart:      strings.EqualFold(cfg["boot.autostart"], "true") || cfg["boot.autostart"] == "1",
 		IPv4:           []string{},
 		IPv6:           []string{},
 		SnapshotsCount: len(r.Snapshots),
@@ -409,6 +437,172 @@ func (c *Client) DeleteInstance(ctx context.Context, name string) error {
 		return ErrInvalidName
 	}
 	env, err := c.do(ctx, http.MethodDelete, "/1.0/instances/"+url.PathEscape(name), nil)
+	if err != nil {
+		return err
+	}
+	return c.waitOperation(ctx, env.Operation)
+}
+
+func (c *Client) UpdateInstance(ctx context.Context, name string, req UpdateInstanceRequest) error {
+	if !ValidInstanceName(name) {
+		return ErrInvalidName
+	}
+	payload := map[string]any{}
+	if req.Description != nil {
+		payload["description"] = strings.TrimSpace(*req.Description)
+	}
+	cfg := map[string]string{}
+	if req.CPULimit != nil {
+		cfg["limits.cpu"] = strings.TrimSpace(*req.CPULimit)
+	}
+	if req.MemoryLimit != nil {
+		cfg["limits.memory"] = strings.TrimSpace(*req.MemoryLimit)
+	}
+	if req.Autostart != nil {
+		if *req.Autostart {
+			cfg["boot.autostart"] = "true"
+		} else {
+			cfg["boot.autostart"] = "false"
+		}
+	}
+	if len(cfg) > 0 {
+		payload["config"] = cfg
+	}
+	if len(payload) == 0 {
+		return errors.New("no fields to update")
+	}
+	env, err := c.do(ctx, http.MethodPatch, "/1.0/instances/"+url.PathEscape(name), payload)
+	if err != nil {
+		return err
+	}
+	return c.waitOperation(ctx, env.Operation)
+}
+
+func (c *Client) Exec(ctx context.Context, name string, req ExecRequest) (ExecResult, error) {
+	if !ValidInstanceName(name) {
+		return ExecResult{}, ErrInvalidName
+	}
+	cmdStr := strings.TrimSpace(req.Command)
+	if cmdStr == "" || len(cmdStr) > 4096 {
+		return ExecResult{}, errors.New("command must be between 1 and 4096 characters")
+	}
+	payload := map[string]any{
+		"command":            []string{"/bin/sh", "-c", cmdStr},
+		"wait-for-websocket": false,
+		"interactive":        false,
+		"record-output":      true,
+		"environment":        map[string]string{"TERM": "xterm-256color"},
+	}
+	if cwd := strings.TrimSpace(req.Cwd); cwd != "" {
+		payload["cwd"] = cwd
+	}
+	env, err := c.do(ctx, http.MethodPost, "/1.0/instances/"+url.PathEscape(name)+"/exec", payload)
+	if err != nil {
+		return ExecResult{}, err
+	}
+	metaRaw, err := c.waitOperationMetadata(ctx, env.Operation)
+	if err != nil {
+		return ExecResult{}, err
+	}
+	var meta struct {
+		Return int               `json:"return"`
+		Output map[string]string `json:"output"`
+	}
+	_ = json.Unmarshal(metaRaw, &meta)
+
+	res := ExecResult{ExitCode: meta.Return}
+	if outPath := meta.Output["1"]; outPath != "" {
+		if text, status, err := c.doRaw(ctx, http.MethodGet, outPath, 256*1024); err == nil && status < 400 {
+			res.Stdout = text
+		}
+		_, _, _ = c.doRaw(ctx, http.MethodDelete, outPath, 1024)
+	}
+	if errPath := meta.Output["2"]; errPath != "" {
+		if text, status, err := c.doRaw(ctx, http.MethodGet, errPath, 256*1024); err == nil && status < 400 {
+			res.Stderr = text
+		}
+		_, _, _ = c.doRaw(ctx, http.MethodDelete, errPath, 1024)
+	}
+	return res, nil
+}
+
+func (c *Client) ConsoleLog(ctx context.Context, name string) (string, error) {
+	if !ValidInstanceName(name) {
+		return "", ErrInvalidName
+	}
+	text, status, err := c.doRaw(ctx, http.MethodGet, "/1.0/instances/"+url.PathEscape(name)+"/console", 256*1024)
+	if err != nil {
+		return "", err
+	}
+	if status == http.StatusNotFound {
+		return "", nil
+	}
+	if status >= 400 {
+		return "", fmt.Errorf("console log unavailable (HTTP %d)", status)
+	}
+	return text, nil
+}
+
+func (c *Client) ListBackups(ctx context.Context, instanceName string) ([]Backup, error) {
+	if !ValidInstanceName(instanceName) {
+		return nil, ErrInvalidName
+	}
+	env, err := c.do(ctx, http.MethodGet, "/1.0/instances/"+url.PathEscape(instanceName)+"/backups?recursion=1", nil)
+	if err != nil {
+		return nil, err
+	}
+	var raw []struct {
+		Name             string    `json:"name"`
+		CreatedAt        time.Time `json:"created_at"`
+		ExpiresAt        time.Time `json:"expires_at"`
+		InstanceOnly     bool      `json:"instance_only"`
+		OptimizedStorage bool      `json:"optimized_storage"`
+	}
+	if err := json.Unmarshal(env.Metadata, &raw); err != nil {
+		return nil, err
+	}
+	out := make([]Backup, 0, len(raw))
+	for _, b := range raw {
+		item := Backup{
+			Name:         b.Name,
+			InstanceOnly: b.InstanceOnly,
+			Optimized:    b.OptimizedStorage,
+		}
+		if !b.CreatedAt.IsZero() {
+			item.CreatedAt = b.CreatedAt.UTC().Format(time.RFC3339)
+		}
+		if !b.ExpiresAt.IsZero() {
+			item.ExpiresAt = b.ExpiresAt.UTC().Format(time.RFC3339)
+		}
+		out = append(out, item)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].CreatedAt > out[j].CreatedAt
+	})
+	return out, nil
+}
+
+func (c *Client) CreateBackup(ctx context.Context, instanceName string, req CreateBackupRequest) error {
+	if !ValidInstanceName(instanceName) || !ValidSnapshotName(req.Name) {
+		return ErrInvalidName
+	}
+	payload := map[string]any{
+		"name":              req.Name,
+		"instance_only":     req.InstanceOnly,
+		"optimized_storage": req.OptimizedStorage,
+	}
+	env, err := c.do(ctx, http.MethodPost, "/1.0/instances/"+url.PathEscape(instanceName)+"/backups", payload)
+	if err != nil {
+		return err
+	}
+	return c.waitOperation(ctx, env.Operation)
+}
+
+func (c *Client) DeleteBackup(ctx context.Context, instanceName, backupName string) error {
+	if !ValidInstanceName(instanceName) || !ValidSnapshotName(backupName) {
+		return ErrInvalidName
+	}
+	env, err := c.do(ctx, http.MethodDelete, "/1.0/instances/"+url.PathEscape(instanceName)+"/backups/"+url.PathEscape(backupName), nil)
 	if err != nil {
 		return err
 	}

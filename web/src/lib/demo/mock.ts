@@ -1,5 +1,5 @@
 import { ApiError } from '../api/client'
-import type { AlertChannel, AlertEvent, AlertRule, Api, AuditEntry, Health, Host, IncusInstance, IncusResources, IncusSnapshot, LogEntry, ProcessInfo, Resource, ResourceKind, Series, SeriesPoint, ServiceInfo, Session, Step } from '../api/client'
+import type { AlertChannel, AlertEvent, AlertRule, Api, AuditEntry, Health, Host, IncusBackup, IncusInstance, IncusResources, IncusSnapshot, LogEntry, ProcessInfo, Resource, ResourceKind, Series, SeriesPoint, ServiceInfo, Session, Step } from '../api/client'
 import type { LiveStore, TransportState } from '../realtime/store'
 import type { LivePoint } from '../realtime/stream'
 import { metric } from '../../features/metrics/catalog'
@@ -19,6 +19,7 @@ let demoEvents: AlertEvent[] | undefined
 let demoAudit: AuditEntry[] | undefined
 let demoIncusInstances: IncusInstance[] | undefined
 let demoIncusSnapshots: Record<string, IncusSnapshot[]> | undefined
+let demoIncusBackups: Record<string, IncusBackup[]> | undefined
 let nextAlertId = 10
 
 function getDemoIncus() {
@@ -29,7 +30,7 @@ function getDemoIncus() {
         name: 'caddy-edge', type: 'container', status: 'Running', description: 'Reverse proxy & TLS termination',
         architecture: 'x86_64', ephemeral: false, stateful: false, profiles: ['default'],
         created_at: new Date(now - 28 * 86400_000).toISOString(), last_used_at: new Date(now - 3600_000).toISOString(),
-        cpu_limit: '2', memory_limit: '1GiB', cpu_usage_ns: 94_000_000_000,
+        cpu_limit: '2', memory_limit: '1GiB', autostart: true, cpu_usage_ns: 94_000_000_000,
         memory_usage_bytes: 184 * MiB, memory_peak_bytes: 290 * MiB, disk_usage_bytes: 1.4 * GiB,
         processes: 14, pid: 3112, ipv4: ['10.24.0.10'], ipv6: ['fd42:1::10'], snapshots_count: 2,
       },
@@ -37,7 +38,7 @@ function getDemoIncus() {
         name: 'postgres-prod', type: 'container', status: 'Running', description: 'Primary PostgreSQL 16 instance',
         architecture: 'x86_64', ephemeral: false, stateful: false, profiles: ['default'],
         created_at: new Date(now - 45 * 86400_000).toISOString(), last_used_at: new Date(now - 1800_000).toISOString(),
-        cpu_limit: '4', memory_limit: '8GiB', cpu_usage_ns: 412_000_000_000,
+        cpu_limit: '4', memory_limit: '8GiB', autostart: true, cpu_usage_ns: 412_000_000_000,
         memory_usage_bytes: 3.6 * GiB, memory_peak_bytes: 5.1 * GiB, disk_usage_bytes: 18.2 * GiB,
         processes: 29, pid: 3490, ipv4: ['10.24.0.20'], ipv6: [], snapshots_count: 1,
       },
@@ -45,7 +46,7 @@ function getDemoIncus() {
         name: 'ubuntu-lab', type: 'virtual-machine', status: 'Running', description: 'KVM dev & CI runner VM',
         architecture: 'x86_64', ephemeral: false, stateful: false, profiles: ['default'],
         created_at: new Date(now - 14 * 86400_000).toISOString(), last_used_at: new Date(now - 600_000).toISOString(),
-        cpu_limit: '4', memory_limit: '4GiB', cpu_usage_ns: 280_000_000_000,
+        cpu_limit: '4', memory_limit: '4GiB', autostart: false, cpu_usage_ns: 280_000_000_000,
         memory_usage_bytes: 2.1 * GiB, memory_peak_bytes: 3.4 * GiB, disk_usage_bytes: 24.5 * GiB,
         processes: 112, pid: 4120, ipv4: ['10.24.0.35'], ipv6: [], snapshots_count: 1,
       },
@@ -53,7 +54,7 @@ function getDemoIncus() {
         name: 'debian-staging', type: 'virtual-machine', status: 'Stopped', description: 'Pre-production validation VM',
         architecture: 'x86_64', ephemeral: false, stateful: false, profiles: ['default'],
         created_at: new Date(now - 9 * 86400_000).toISOString(), last_used_at: new Date(now - 2 * 86400_000).toISOString(),
-        cpu_limit: '2', memory_limit: '2GiB', cpu_usage_ns: 0,
+        cpu_limit: '2', memory_limit: '2GiB', autostart: false, cpu_usage_ns: 0,
         memory_usage_bytes: 0, memory_peak_bytes: 0, disk_usage_bytes: 12.1 * GiB,
         processes: 0, pid: 0, ipv4: [], ipv6: [], snapshots_count: 0,
       },
@@ -61,7 +62,7 @@ function getDemoIncus() {
         name: 'redis-cache', type: 'container', status: 'Frozen', description: 'In-memory session & queue cache',
         architecture: 'x86_64', ephemeral: false, stateful: false, profiles: ['default'],
         created_at: new Date(now - 6 * 86400_000).toISOString(), last_used_at: new Date(now - 12 * 3600_000).toISOString(),
-        cpu_limit: '1', memory_limit: '512MiB', cpu_usage_ns: 12_000_000_000,
+        cpu_limit: '1', memory_limit: '512MiB', autostart: true, cpu_usage_ns: 12_000_000_000,
         memory_usage_bytes: 96 * MiB, memory_peak_bytes: 140 * MiB, disk_usage_bytes: 310 * MiB,
         processes: 6, pid: 5012, ipv4: ['10.24.0.41'], ipv6: [], snapshots_count: 0,
       },
@@ -82,7 +83,15 @@ function getDemoIncus() {
       ],
     }
   }
-  return { instances: demoIncusInstances, snapshots: demoIncusSnapshots }
+  if (!demoIncusBackups) {
+    const now = Date.now()
+    demoIncusBackups = {
+      'postgres-prod': [
+        { name: 'weekly-2026-11-23', created_at: new Date(now - 86400_000).toISOString(), instance_only: false, optimized_storage: true },
+      ],
+    }
+  }
+  return { instances: demoIncusInstances, snapshots: demoIncusSnapshots, backups: demoIncusBackups }
 }
 
 function getDemoAudit() {
@@ -653,6 +662,7 @@ export function createDemoApi(onUnauthorized?: () => void): Api {
         last_used_at: input.start ? nowIso : undefined,
         cpu_limit: input.cpu_limit,
         memory_limit: input.memory_limit,
+        autostart: false,
         cpu_usage_ns: 0,
         memory_usage_bytes: input.start ? 128 * MiB : 0,
         memory_peak_bytes: input.start ? 160 * MiB : 0,
@@ -757,6 +767,81 @@ export function createDemoApi(onUnauthorized?: () => void): Api {
           { name: 'default', description: 'Default Incus profile', used_by_count: 5 },
         ],
       }
+    },
+    async incusUpdateInstance(_session, name, input, signal) {
+      checkAbort(signal)
+      requireSession()
+      const inst = getDemoIncus().instances.find(i => i.name === name)
+      if (!inst) throw new ApiError(404, 'not_found', 0, undefined, 'Instance not found')
+      if (input.description !== undefined) inst.description = input.description
+      if (input.cpu_limit !== undefined) inst.cpu_limit = input.cpu_limit || undefined
+      if (input.memory_limit !== undefined) inst.memory_limit = input.memory_limit || undefined
+      if (input.autostart !== undefined) inst.autostart = input.autostart
+      getDemoAudit().unshift({
+        id: nextAlertId++, actor: 'admin', action: 'incus.instance.update', target: `incus:${name}`, status: 'ok',
+        detail: `instance ${name} updated (demo)`, created_at_ms: Date.now(),
+      })
+      return { ok: true, message: `instance ${name} updated` }
+    },
+    async incusExec(_session, name, command, signal) {
+      checkAbort(signal)
+      requireSession()
+      const inst = getDemoIncus().instances.find(i => i.name === name)
+      if (!inst) throw new ApiError(404, 'not_found', 0, undefined, 'Instance not found')
+      if (inst.status !== 'Running') {
+        throw new ApiError(422, 'action_failed', 0, undefined, 'Instance is not running')
+      }
+      const cmd = command.trim()
+      let stdout = `Executed "${cmd}" on ${name}\n`
+      if (cmd === 'uptime') stdout = ` 01:55:12 up 14 days,  4:21,  0 users,  load average: 0.14, 0.18, 0.12\n`
+      else if (cmd.startsWith('free')) stdout = `               total        used        free      shared  buff/cache   available\nMem:           4.0Gi       1.2Gi       2.1Gi        32Mi       710Mi       2.6Gi\nSwap:             0B          0B          0B\n`
+      else if (cmd.startsWith('df')) stdout = `Filesystem      Size  Used Avail Use% Mounted on\n/dev/root        50G  4.2G   46G   9% /\ntmpfs           2.0G     0  2.0G   0% /dev/shm\n`
+      else if (cmd.startsWith('ip')) stdout = `lo               UNKNOWN        127.0.0.1/8 ::1/128\neth0             UP             ${inst.ipv4[0] ?? '10.24.0.99'}/24\n`
+      else if (cmd === 'whoami') stdout = 'root\n'
+      else if (cmd.startsWith('uname')) stdout = `Linux ${name} 6.8.0-52-generic #53-Ubuntu SMP PREEMPT_DYNAMIC x86_64 GNU/Linux\n`
+      getDemoAudit().unshift({
+        id: nextAlertId++, actor: 'admin', action: 'incus.instance.exec', target: `incus:${name}`, status: 'ok',
+        detail: `${cmd} (exit 0)`, created_at_ms: Date.now(),
+      })
+      return { exit_code: 0, stdout, stderr: '' }
+    },
+    async incusConsoleLog(name, signal) {
+      checkAbort(signal)
+      requireSession()
+      return `[    0.000000] Linux version 6.8.0-52-generic (buildd@lcy02-amd64)\n[    1.204118] systemd[1]: Hostname set to <${name}>.\n[    2.841902] systemd[1]: Reached target multi-user.target - Multi-User System.\nUbuntu 24.04.2 LTS ${name} console\n`
+    },
+    async incusBackups(name, signal) {
+      checkAbort(signal)
+      requireSession()
+      return [...(getDemoIncus().backups[name] ?? [])]
+    },
+    async incusCreateBackup(_session, name, backupName, instanceOnly, signal) {
+      checkAbort(signal)
+      requireSession()
+      const { backups } = getDemoIncus()
+      backups[name] = backups[name] ?? []
+      backups[name].unshift({
+        name: backupName,
+        created_at: new Date().toISOString(),
+        instance_only: instanceOnly,
+        optimized_storage: true,
+      })
+      getDemoAudit().unshift({
+        id: nextAlertId++, actor: 'admin', action: 'incus.backup.create', target: `incus:${name}/backup:${backupName}`, status: 'ok',
+        detail: `backup ${name}/${backupName} created (demo)`, created_at_ms: Date.now(),
+      })
+      return { ok: true, message: `backup ${name}/${backupName} created` }
+    },
+    async incusDeleteBackup(_session, name, backupName, signal) {
+      checkAbort(signal)
+      requireSession()
+      const { backups } = getDemoIncus()
+      backups[name] = (backups[name] ?? []).filter(b => b.name !== backupName)
+      getDemoAudit().unshift({
+        id: nextAlertId++, actor: 'admin', action: 'incus.backup.delete', target: `incus:${name}/backup:${backupName}`, status: 'ok',
+        detail: `backup ${name}/${backupName} deleted (demo)`, created_at_ms: Date.now(),
+      })
+      return { ok: true, message: `backup ${name}/${backupName} deleted` }
     },
   }
 }

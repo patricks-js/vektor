@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"path"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -109,15 +110,23 @@ func New(cfg config.HTTPConfig, queries *history.QueryService, sessions *auth.St
 	})
 	a.routeMethods(apiPath+"/incus/instances/{name}", true, map[string]http.HandlerFunc{
 		http.MethodGet:    a.getIncusInstance,
+		http.MethodPatch:  a.updateIncusInstance,
 		http.MethodDelete: a.deleteIncusInstance,
 	})
 	a.route(http.MethodPost, apiPath+"/incus/instances/{name}/state", true, a.incusInstanceState)
+	a.route(http.MethodPost, apiPath+"/incus/instances/{name}/exec", true, a.execIncusInstance)
+	a.route(http.MethodGet, apiPath+"/incus/instances/{name}/console", true, a.incusConsoleLog)
 	a.routeMethods(apiPath+"/incus/instances/{name}/snapshots", true, map[string]http.HandlerFunc{
 		http.MethodGet:  a.listIncusSnapshots,
 		http.MethodPost: a.createIncusSnapshot,
 	})
 	a.route(http.MethodPost, apiPath+"/incus/instances/{name}/snapshots/{snap}/restore", true, a.restoreIncusSnapshot)
 	a.route(http.MethodDelete, apiPath+"/incus/instances/{name}/snapshots/{snap}", true, a.deleteIncusSnapshot)
+	a.routeMethods(apiPath+"/incus/instances/{name}/backups", true, map[string]http.HandlerFunc{
+		http.MethodGet:  a.listIncusBackups,
+		http.MethodPost: a.createIncusBackup,
+	})
+	a.route(http.MethodDelete, apiPath+"/incus/instances/{name}/backups/{backup}", true, a.deleteIncusBackup)
 	a.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if a.ui != nil && r.URL.Path != "/api" && !strings.HasPrefix(r.URL.Path, "/api/") {
 			a.ui.ServeHTTP(w, r)
@@ -233,6 +242,7 @@ func (a *API) routeMethods(routePath string, private bool, handlers map[string]h
 	for m := range handlers {
 		allowed = append(allowed, m)
 	}
+	slices.Sort(allowed)
 	allowHeader := strings.Join(allowed, ", ")
 
 	a.mux.HandleFunc(routePath, func(w http.ResponseWriter, r *http.Request) {
@@ -243,13 +253,13 @@ func (a *API) routeMethods(routePath string, private bool, handlers map[string]h
 			return
 		}
 		isStream := routePath == streamPath && r.Method == http.MethodGet
-		acceptsBody := (r.Method == http.MethodPost || r.Method == http.MethodPut) && routePath != logoutPath
+		acceptsBody := (r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch) && routePath != logoutPath
 		if len(r.URL.RawQuery) > 2048 || (!acceptsBody && r.ContentLength != 0) {
 			w.Header().Set("Connection", "close")
 			writeError(w, http.StatusBadRequest, "invalid_request", "Unexpected body or oversized query")
 			return
 		}
-		isMutation := r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodDelete
+		isMutation := r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch || r.Method == http.MethodDelete
 		if isMutation && !a.validOrigin(r) {
 			closeWithUnreadBody(w, r)
 			writeError(w, http.StatusForbidden, "origin_denied", "Origin is not allowed")

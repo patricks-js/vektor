@@ -56,6 +56,7 @@ type Instance struct {
 	LastUsedAt       string   `json:"last_used_at,omitempty"`
 	CPULimit         string   `json:"cpu_limit,omitempty"`
 	MemoryLimit      string   `json:"memory_limit,omitempty"`
+	Autostart        bool     `json:"autostart"`
 	CPUUsageNs       int64    `json:"cpu_usage_ns"`
 	MemoryUsageBytes int64    `json:"memory_usage_bytes"`
 	MemoryPeakBytes  int64    `json:"memory_peak_bytes"`
@@ -126,4 +127,36 @@ type CreateSnapshotRequest struct {
 type StateActionRequest struct {
 	Action  string `json:"action"` // start, stop, force_stop, restart, freeze, unfreeze
 	Timeout int    `json:"timeout,omitempty"`
+}
+
+type UpdateInstanceRequest struct {
+	Description *string `json:"description,omitempty"`
+	CPULimit    *string `json:"cpu_limit,omitempty"`
+	MemoryLimit *string `json:"memory_limit,omitempty"`
+	Autostart   *bool   `json:"autostart,omitempty"`
+}
+
+type ExecRequest struct {
+	Command string `json:"command"`
+	Cwd     string `json:"cwd,omitempty"`
+}
+
+type ExecResult struct {
+	ExitCode int    `json:"exit_code"`
+	Stdout   string `json:"stdout"`
+	Stderr   string `json:"stderr"`
+}
+
+type Backup struct {
+	Name          string `json:"name"`
+	CreatedAt     string `json:"created_at,omitempty"`
+	ExpiresAt     string `json:"expires_at,omitempty"`
+	InstanceOnly  bool   `json:"instance_only"`
+	Optimized     bool   `json:"optimized_storage"`
+}
+
+type CreateBackupRequest struct {
+	Name             string `json:"name"`
+	InstanceOnly     bool   `json:"instance_only"`
+	OptimizedStorage bool   `json:"optimized_storage"`
 }

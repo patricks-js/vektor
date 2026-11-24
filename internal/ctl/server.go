@@ -163,6 +163,69 @@ func (e SystemExecutor) ExecuteData(ctx context.Context, req Request) (Response,
 		}
 		return Response{OK: true, Message: fmt.Sprintf("instance %s deleted", req.Target)}, nil
 
+	case "incus.instance.update":
+		var upd incus.UpdateInstanceRequest
+		if err := json.Unmarshal(req.Payload, &upd); err != nil {
+			return Response{}, errors.New("invalid update instance payload")
+		}
+		if err := e.incusClient().UpdateInstance(ctx, req.Target, upd); err != nil {
+			return Response{}, err
+		}
+		return Response{OK: true, Message: fmt.Sprintf("instance %s updated", req.Target)}, nil
+
+	case "incus.instance.exec":
+		var execReq incus.ExecRequest
+		if err := json.Unmarshal(req.Payload, &execReq); err != nil {
+			return Response{}, errors.New("invalid exec payload")
+		}
+		res, err := e.incusClient().Exec(ctx, req.Target, execReq)
+		if err != nil {
+			return Response{}, err
+		}
+		data, err := marshalData(res)
+		if err != nil {
+			return Response{}, err
+		}
+		return Response{OK: true, Message: fmt.Sprintf("exit %d", res.ExitCode), Data: data}, nil
+
+	case "incus.instance.console":
+		text, err := e.incusClient().ConsoleLog(ctx, req.Target)
+		if err != nil {
+			return Response{}, err
+		}
+		data, err := marshalData(map[string]string{"log": text})
+		if err != nil {
+			return Response{}, err
+		}
+		return Response{OK: true, Data: data}, nil
+
+	case "incus.backups.list":
+		backups, err := e.incusClient().ListBackups(ctx, req.Target)
+		if err != nil {
+			return Response{}, err
+		}
+		data, err := marshalData(backups)
+		if err != nil {
+			return Response{}, err
+		}
+		return Response{OK: true, Data: data}, nil
+
+	case "incus.backup.create":
+		var bReq incus.CreateBackupRequest
+		if err := json.Unmarshal(req.Payload, &bReq); err != nil {
+			return Response{}, errors.New("invalid backup payload")
+		}
+		if err := e.incusClient().CreateBackup(ctx, req.Target, bReq); err != nil {
+			return Response{}, err
+		}
+		return Response{OK: true, Message: fmt.Sprintf("backup %s/%s created", req.Target, bReq.Name)}, nil
+
+	case "incus.backup.delete":
+		if err := e.incusClient().DeleteBackup(ctx, req.Target, req.Signal); err != nil {
+			return Response{}, err
+		}
+		return Response{OK: true, Message: fmt.Sprintf("backup %s/%s deleted", req.Target, req.Signal)}, nil
+
 	case "incus.snapshots.list":
 		snaps, err := e.incusClient().ListSnapshots(ctx, req.Target)
 		if err != nil {

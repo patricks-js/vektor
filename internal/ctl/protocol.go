@@ -42,11 +42,15 @@ type Response struct {
 
 func actionTimeout(action string) time.Duration {
 	switch action {
-	case "incus.instance.create":
+	case "incus.instance.create", "incus.backup.create":
 		return 125 * time.Second
+	case "incus.instance.exec":
+		return 65 * time.Second
 	case "incus.instance.start", "incus.instance.stop", "incus.instance.force_stop",
 		"incus.instance.restart", "incus.instance.freeze", "incus.instance.unfreeze",
-		"incus.instance.delete", "incus.snapshot.create", "incus.snapshot.restore", "incus.snapshot.delete":
+		"incus.instance.delete", "incus.instance.update",
+		"incus.snapshot.create", "incus.snapshot.restore", "incus.snapshot.delete",
+		"incus.backup.delete":
 		return 45 * time.Second
 	default:
 		if strings.HasPrefix(action, "incus.") {
@@ -81,8 +85,15 @@ func ValidateRequest(req Request) error {
 		return nil
 	case "incus.instance.get", "incus.instance.start", "incus.instance.stop", "incus.instance.force_stop",
 		"incus.instance.restart", "incus.instance.freeze", "incus.instance.unfreeze",
-		"incus.instance.delete", "incus.snapshots.list", "incus.snapshot.create":
+		"incus.instance.delete", "incus.instance.console",
+		"incus.snapshots.list", "incus.snapshot.create",
+		"incus.backups.list", "incus.backup.create":
 		if !incus.ValidInstanceName(req.Target) {
+			return ErrInvalidAction
+		}
+		return nil
+	case "incus.instance.update", "incus.instance.exec":
+		if !incus.ValidInstanceName(req.Target) || len(req.Payload) == 0 {
 			return ErrInvalidAction
 		}
 		return nil
@@ -91,7 +102,7 @@ func ValidateRequest(req Request) error {
 			return ErrInvalidAction
 		}
 		return nil
-	case "incus.snapshot.restore", "incus.snapshot.delete":
+	case "incus.snapshot.restore", "incus.snapshot.delete", "incus.backup.delete":
 		if !incus.ValidInstanceName(req.Target) || !incus.ValidSnapshotName(req.Signal) {
 			return ErrInvalidAction
 		}

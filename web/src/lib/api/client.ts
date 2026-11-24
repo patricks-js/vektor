@@ -138,6 +138,7 @@ export type IncusInstance = {
   last_used_at?: string
   cpu_limit?: string
   memory_limit?: string
+  autostart: boolean
   cpu_usage_ns: number
   memory_usage_bytes: number
   memory_peak_bytes: number
@@ -201,6 +202,27 @@ export type IncusCreateInstanceInput = {
 }
 
 export type IncusStateAction = 'start' | 'stop' | 'force_stop' | 'restart' | 'freeze' | 'unfreeze'
+
+export type IncusUpdateInstanceInput = {
+  description?: string
+  cpu_limit?: string
+  memory_limit?: string
+  autostart?: boolean
+}
+
+export type IncusExecResult = {
+  exit_code: number
+  stdout: string
+  stderr: string
+}
+
+export type IncusBackup = {
+  name: string
+  created_at?: string
+  expires_at?: string
+  instance_only: boolean
+  optimized_storage: boolean
+}
 
 export class ApiError extends Error {
   constructor(
@@ -416,6 +438,29 @@ export function createApi(onUnauthorized?: () => void) {
         method: 'DELETE', signal, headers: { 'X-CSRF-Token': session.csrf_token },
       }),
     incusResources: (signal: AbortSignal) => request<IncusResources>('/api/v1/incus/resources', { signal }),
+    incusUpdateInstance: (session: Session, name: string, input: IncusUpdateInstanceInput, signal?: AbortSignal) =>
+      request<{ ok: boolean; message?: string }>(`/api/v1/incus/instances/${encodeURIComponent(name)}`, {
+        method: 'PATCH', signal, body: JSON.stringify(input),
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': session.csrf_token },
+      }),
+    incusExec: (session: Session, name: string, command: string, signal?: AbortSignal) =>
+      request<IncusExecResult>(`/api/v1/incus/instances/${encodeURIComponent(name)}/exec`, {
+        method: 'POST', signal, body: JSON.stringify({ command }),
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': session.csrf_token },
+      }),
+    incusConsoleLog: async (name: string, signal: AbortSignal) =>
+      (await request<{ log: string }>(`/api/v1/incus/instances/${encodeURIComponent(name)}/console`, { signal })).log,
+    incusBackups: async (name: string, signal: AbortSignal) =>
+      (await request<{ backups: IncusBackup[] }>(`/api/v1/incus/instances/${encodeURIComponent(name)}/backups`, { signal })).backups,
+    incusCreateBackup: (session: Session, name: string, backupName: string, instanceOnly: boolean, signal?: AbortSignal) =>
+      request<{ ok: boolean; message?: string }>(`/api/v1/incus/instances/${encodeURIComponent(name)}/backups`, {
+        method: 'POST', signal, body: JSON.stringify({ name: backupName, instance_only: instanceOnly, optimized_storage: true }),
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': session.csrf_token },
+      }),
+    incusDeleteBackup: (session: Session, name: string, backupName: string, signal?: AbortSignal) =>
+      request<{ ok: boolean; message?: string }>(`/api/v1/incus/instances/${encodeURIComponent(name)}/backups/${encodeURIComponent(backupName)}`, {
+        method: 'DELETE', signal, headers: { 'X-CSRF-Token': session.csrf_token },
+      }),
   }
 }
 

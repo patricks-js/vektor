@@ -162,3 +162,78 @@ func TestClientLifecycleAndResources(t *testing.T) {
 		t.Fatalf("unexpected resources: %+v err=%v", res, err)
 	}
 }
+
+func TestClientUpdateExecConsoleAndBackups(t *testing.T) {
+	patched := false
+	deletedLogs := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("PATCH /1.0/instances/web-01", func(w http.ResponseWriter, r *http.Request) {
+		patched = true
+		_ = json.NewEncoder(w).Encode(map[string]any{"type": "sync", "status_code": 200})
+	})
+	mux.HandleFunc("POST /1.0/instances/web-01/exec", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"type": "async", "operation": "/1.0/operations/exec-1"})
+	})
+	mux.HandleFunc("GET /1.0/operations/exec-1/wait", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"type": "sync",
+			"metadata": map[string]any{
+				"status":      "Success",
+				"status_code": 200,
+				"metadata": map[string]any{
+					"return": 0,
+					"output": map[string]string{
+						"1": "/1.0/instances/web-01/logs/exec_out",
+						"2": "/1.0/instances/web-01/logs/exec_err",
+					},
+				},
+			},
+		})
+	})
+	mux.HandleFunc("GET /1.0/instances/web-01/logs/exec_out", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("hello from incus\n"))
+	})
+	mux.HandleFunc("GET /1.0/instances/web-01/logs/exec_err", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(""))
+	})
+	mux.HandleFunc("DELETE /1.0/instances/web-01/logs/{log}", func(w http.ResponseWriter, r *http.Request) {
+		deletedLogs++
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("GET /1.0/instances/web-01/console", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("systemd[1]: Reached target multi-user.target\n"))
+	})
+	mux.HandleFunc("GET /1.0/instances/web-01/backups", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"type": "sync",
+			"metadata": []map[string]any{
+				{"name": "daily-01", "instance_only": true, "optimized_storage": true},
+			},
+		})
+	})
+
+	sock := startMockIncus(t, mux)
+	c := NewClient(sock)
+	ctx := context.Background()
+
+	cpu := "4"
+	autostart := true
+	if err := c.UpdateInstance(ctx, "web-01", UpdateInstanceRequest{CPULimit: &cpu, Autostart: &autostart}); err != nil || !patched {
+		t.Fatalf("update failed: err=%v patched=%v", err, patched)
+	}
+
+	execRes, err := c.Exec(ctx, "web-01", ExecRequest{Command: "echo hello"})
+	if err != nil || execRes.ExitCode != 0 || execRes.Stdout != "hello from incus\n" || deletedLogs != 2 {
+		t.Fatalf("unexpected exec result: %+v deletedLogs=%d err=%v", execRes, deletedLogs, err)
+	}
+
+	logText, err := c.ConsoleLog(ctx, "web-01")
+	if err != nil || logText == "" {
+		t.Fatalf("unexpected console log: %q err=%v", logText, err)
+	}
+
+	backups, err := c.ListBackups(ctx, "web-01")
+	if err != nil || len(backups) != 1 || backups[0].Name != "daily-01" {
+		t.Fatalf("unexpected backups: %+v err=%v", backups, err)
+	}
+}

@@ -6,8 +6,19 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o 
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-24
+
 ### Added
-- Nova identidade visual do Vektor (`assets/vektor-banner.png`, `assets/vektor-logo.png`, `assets/vektor-mark*.svg`), `favicon.svg` servido pelo handler embarcado e novo ícone vetorial na marca da barra superior.
+- **Identidade visual do Vektor:** novas logos (`assets/vektor-banner.png`, `assets/vektor-logo.png`, `assets/vektor-mark*.svg`), `favicon.svg` servido pelo handler embarcado e novo ícone vetorial na marca da barra superior.
+- **Fase 4 — Operações Avançadas do Incus:**
+  - **Edição de recursos e configuração (`PATCH /api/v1/incus/instances/{name}`):** alteração de vCPUs, RAM (`MiB`/`GiB`), descrição e `boot.autostart` direto na UI, além de barra de progresso de uso de RAM em `InstanceDetail`.
+  - **Terminal de comandos (`POST /api/v1/incus/instances/{name}/exec`):** execução de comandos dentro de containers e VMs via Incus REST API com limpeza automática de logs temporários, auditoria em `audit_log`, histórico (`↑`/`↓`) e atalhos rápidos (`uptime`, `free -h`, `df -h`, `ip -br a`, `uname -a`).
+  - **Log do Console (`GET /api/v1/incus/instances/{name}/console`):** leitura do buffer de boot/console da instância.
+  - **Backups compactados (`GET/POST/DELETE /api/v1/incus/instances/{name}/backups`):** listagem, criação (com opção *Sem snapshots*) e exclusão de backups nativos do Incus.
+  - Modo demo atualizado com terminal simulado, console de boot, edição de recursos e backups.
+
+### Fixed
+- Ordenação determinística do header HTTP `Allow` em `internal/httpapi/server.go`.
 
 ## [0.7.1] - 2026-11-24
 
