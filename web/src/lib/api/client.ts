@@ -208,8 +208,9 @@ export class ApiError extends Error {
     readonly code: string,
     readonly retryAfter = 0,
     readonly diagnostics?: Health,
+    readonly detail?: string,
   ) {
-    super(code)
+    super(detail || code)
   }
 }
 
@@ -275,7 +276,7 @@ export function createApi(onUnauthorized?: () => void) {
       if (response.status === 401 && path !== '/api/v1/auth/login' && !init?.signal?.aborted) onUnauthorized?.()
       const retry = Number(response.headers.get('Retry-After')) || 0
       const body: (Partial<Schemas['Error']> & { diagnostics?: Health }) | null = await response.json().catch(() => null)
-      throw new ApiError(response.status, body?.code ?? 'http_error', retry, body?.diagnostics)
+      throw new ApiError(response.status, body?.code ?? 'http_error', retry, body?.diagnostics, body?.message)
     }
     if (!response.headers.get('content-type')?.includes('application/json')) {
       throw new ApiError(response.status, 'invalid_response')

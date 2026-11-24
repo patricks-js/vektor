@@ -54,7 +54,11 @@ chmod 0750 /etc/vektor
 chmod 0640 /etc/vektor/vektord.env
 if command -v systemctl >/dev/null 2>&1; then
   systemctl daemon-reload || true
-  systemctl enable --now vektor-ctl.socket || true
+  if [ -d /run/vektor ]; then
+    chmod 0755 /run/vektor || true
+  fi
+  systemctl enable vektor-ctl.socket || true
+  systemctl restart vektor-ctl.socket || true
   systemctl try-restart vektord || true
 fi
 echo "Vektor installed. Run: sudo -u vektor /usr/bin/vektord bootstrap-admin --data-dir /var/lib/vektor"

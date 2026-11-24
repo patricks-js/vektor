@@ -388,13 +388,20 @@ func (c *Client) CreateInstance(ctx context.Context, req CreateInstanceRequest) 
 		"profiles":    profiles,
 		"config":      cfg,
 		"source":      source,
-		"start":       req.Start,
 	}
 	env, err := c.do(ctx, http.MethodPost, "/1.0/instances", payload)
 	if err != nil {
 		return err
 	}
-	return c.waitOperation(ctx, env.Operation)
+	if err := c.waitOperation(ctx, env.Operation); err != nil {
+		return err
+	}
+	if req.Start {
+		if err := c.ChangeState(ctx, req.Name, "start"); err != nil {
+			return fmt.Errorf("instance created, but failed to start: %w", err)
+		}
+	}
+	return nil
 }
 
 func (c *Client) DeleteInstance(ctx context.Context, name string) error {

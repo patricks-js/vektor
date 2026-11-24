@@ -5,7 +5,7 @@ import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Badge, Button, Empty, ErrorState, Loading, Panel, SelectField, StatusDot, TextField, layout, tableStyles } from '../../components/ui/ui'
 import { useSession } from '../auth/session'
-import { formatValue } from '../metrics/format'
+import { dateTime, formatValue } from '../metrics/format'
 import type { IncusCreateInstanceInput, IncusStateAction } from '../../lib/api/client'
 import { useApi } from '../../lib/api/queries'
 
@@ -67,6 +67,22 @@ const s = stylex.create({
     backgroundColor: 'var(--vk-bg)', borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--vk-border-subtle)',
     overflowX: 'auto', color: 'var(--vk-text-primary)',
   },
+  unitSelect: {
+    minHeight: { default: 38, '@media (pointer: coarse)': 44 }, paddingBlock: 7, paddingInline: 10,
+    borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--vk-border-control)',
+    borderRadius: 'var(--vk-radius-2)', backgroundColor: 'var(--vk-surface-2)', color: 'var(--vk-text-primary)',
+    fontSize: 13, fontWeight: 500, cursor: 'pointer',
+  },
+  feedbackBox: {
+    display: 'flex', alignItems: 'flex-start', gap: 10, paddingBlock: 10, paddingInline: 14,
+    borderRadius: 'var(--vk-radius-2)', borderWidth: 1, borderStyle: 'solid', fontSize: 13, lineHeight: '19px',
+  },
+  feedbackError: {
+    borderColor: 'var(--vk-critical)', backgroundColor: 'var(--vk-surface-1)', color: 'var(--vk-critical)',
+  },
+  feedbackSuccess: {
+    borderColor: 'var(--vk-success)', backgroundColor: 'var(--vk-surface-1)', color: 'var(--vk-success)',
+  },
   pagination: {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10,
     paddingTop: 4, fontSize: 12, color: 'var(--vk-text-secondary)',
@@ -81,6 +97,9 @@ function statusTone(status: string): 'success' | 'warning' | 'critical' | 'neutr
     default: return 'neutral'
   }
 }
+
+const INSTANCE_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9-]{0,62}$/
+const IMAGE_ALIAS_RE = /^[a-zA-Z0-9._:/-]{1,128}$/
 
 export function InstancesPage() {
   const api = useApi()
@@ -100,10 +119,12 @@ export function InstancesPage() {
   const [newImage, setNewImage] = useState(IMAGE_PRESETS[0].value)
   const [customImage, setCustomImage] = useState('')
   const [newCPU, setNewCPU] = useState('2')
-  const [newMem, setNewMem] = useState('1GiB')
+  const [newMemValue, setNewMemValue] = useState('1')
+  const [newMemUnit, setNewMemUnit] = useState<'MiB' | 'GiB'>('GiB')
   const [newDesc, setNewDesc] = useState('')
   const [newProfile, setNewProfile] = useState('default')
   const [newStart, setNewStart] = useState(true)
+  const [submitted, setSubmitted] = useState(false)
 
   const statusQuery = useQuery({
     queryKey: ['incus', 'status'],
@@ -142,12 +163,39 @@ export function InstancesPage() {
     onSuccess: (res) => {
       setFeedback({ tone: 'success', text: res.message || 'Instância criada com sucesso.' })
       setShowCreate(false)
+      setSubmitted(false)
       setNewName('')
       setNewDesc('')
       void queryClient.invalidateQueries({ queryKey: ['incus'] })
     },
     onError: (err) => setFeedback({ tone: 'critical', text: err instanceof Error ? err.message : 'Falha ao criar instância.' }),
   })
+
+  const trimmedName = newName.trim()
+  const nameError = (submitted || trimmedName.length > 0) && !INSTANCE_NAME_RE.test(trimmedName)
+    ? 'Use apenas letras, números e hífen (começando por letra ou número, máx. 63 caracteres).'
+    : undefined
+
+  const trimmedCustomImg = customImage.trim()
+  const customImageError = newImage === '__custom__' && (submitted || trimmedCustomImg.length > 0) && !IMAGE_ALIAS_RE.test(trimmedCustomImg)
+    ? 'Informe um alias válido (ex: images:ubuntu/24.04).'
+    : undefined
+
+  const trimmedCPU = newCPU.trim()
+  const cpuNum = Number(trimmedCPU)
+  const cpuError = trimmedCPU !== '' && (!Number.isInteger(cpuNum) || cpuNum < 1 || cpuNum > 128)
+    ? 'Informe um número inteiro de vCPUs entre 1 e 128 (ou deixe vazio).'
+    : undefined
+
+  const trimmedMem = newMemValue.trim()
+  const memNum = Number(trimmedMem)
+  const memMax = newMemUnit === 'GiB' ? 1024 : 1048576
+  const memError = trimmedMem !== '' && (!Number.isInteger(memNum) || memNum < 1 || memNum > memMax)
+    ? `Informe um inteiro entre 1 e ${memMax} ${newMemUnit} (ou deixe vazio).`
+    : undefined
+
+  const formValid = Boolean(trimmedName) && !nameError && !customImageError && !cpuError && !memError
+    && (newImage !== '__custom__' || Boolean(trimmedCustomImg))
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -167,15 +215,17 @@ export function InstancesPage() {
 
   const handleCreate = (event: React.FormEvent) => {
     event.preventDefault()
-    const image = newImage === '__custom__' ? customImage.trim() : newImage
-    if (!newName.trim() || !image) return
+    setSubmitted(true)
+    if (!formValid) return
+    const image = newImage === '__custom__' ? trimmedCustomImg : newImage
+    setFeedback(null)
     createMutation.mutate({
-      name: newName.trim(),
+      name: trimmedName,
       type: newType,
       image,
       description: newDesc.trim() || undefined,
-      cpu_limit: newCPU.trim() || undefined,
-      memory_limit: newMem.trim() || undefined,
+      cpu_limit: trimmedCPU || undefined,
+      memory_limit: trimmedMem ? `${trimmedMem}${newMemUnit}` : undefined,
       profiles: newProfile ? [newProfile] : ['default'],
       start: newStart,
     })
@@ -217,18 +267,43 @@ export function InstancesPage() {
       {statusQuery.isPending && <Panel><Loading label="Verificando Incus no host…" /></Panel>}
       {statusQuery.isError && <Panel><ErrorState error={statusQuery.error} retry={() => { void statusQuery.refetch() }} /></Panel>}
 
-      {statusQuery.data && !statusQuery.data.available && (
-        <Panel title="Incus não detectado neste host" subtitle={statusQuery.data.reason || 'Socket /var/lib/incus/unix.socket indisponível'}>
-          <p {...stylex.props(layout.small)}>
-            O Vektor integra diretamente com o daemon do <strong>Incus</strong> através do helper isolado <code>vektor-ctl.socket</code> (ADR-006).
-            Para habilitar o gerenciamento de VMs e containers neste servidor, instale e inicialize o Incus:
-          </p>
-          <pre {...stylex.props(s.codeBlock)}>sudo apt install incus{'\n'}sudo incus admin init --minimal</pre>
-          <div>
-            <Button variant="outline" onClick={() => { void statusQuery.refetch() }}>Verificar novamente</Button>
-          </div>
-        </Panel>
-      )}
+      {statusQuery.data && !statusQuery.data.available && (() => {
+        const ctlDown = (statusQuery.data.reason ?? '').includes('vektor-ctl')
+        return (
+          <Panel
+            title={ctlDown ? 'Helper vektor-ctl indisponível' : 'Incus não detectado neste host'}
+            subtitle={statusQuery.data.reason || 'Socket /var/lib/incus/unix.socket indisponível'}
+          >
+            {ctlDown ? (
+              <>
+                <p {...stylex.props(layout.small)}>
+                  O <code>vektord</code> não conseguiu se comunicar com o helper privilegiado <code>vektor-ctl.socket</code> em <code>/run/vektor/ctl.sock</code>.
+                  Verifique se o socket está ativo e se <code>/run/vektor</code> tem permissão <code>0755</code>:
+                </p>
+                <pre {...stylex.props(s.codeBlock)}>sudo chmod 0755 /run/vektor{'\n'}sudo systemctl enable --now vektor-ctl.socket{'\n'}sudo systemctl status vektor-ctl.socket</pre>
+              </>
+            ) : (
+              <>
+                <p {...stylex.props(layout.small)}>
+                  O Vektor integra diretamente com o daemon do <strong>Incus</strong> através do helper isolado <code>vektor-ctl.socket</code> (ADR-006).
+                  Para habilitar o gerenciamento de VMs e containers neste servidor, instale e inicialize o Incus:
+                </p>
+                <pre {...stylex.props(s.codeBlock)}>sudo apt install incus{'\n'}sudo incus admin init --minimal</pre>
+              </>
+            )}
+            <div {...stylex.props(layout.row)}>
+              <Button variant="outline" busy={statusQuery.isFetching} onClick={() => { void statusQuery.refetch() }}>
+                {statusQuery.isFetching ? 'Verificando…' : 'Verificar novamente'}
+              </Button>
+              {statusQuery.dataUpdatedAt > 0 && !statusQuery.isFetching && (
+                <span {...stylex.props(layout.small)}>
+                  Última verificação: {dateTime(statusQuery.dataUpdatedAt)}
+                </span>
+              )}
+            </div>
+          </Panel>
+        )
+      })()}
 
       {available && statusQuery.data && (
         <>
@@ -252,14 +327,27 @@ export function InstancesPage() {
           </div>
 
           {feedback && (
-            <Badge tone={feedback.tone} icon={<StatusDot tone={feedback.tone} />}>{feedback.text}</Badge>
+            <div
+              role={feedback.tone === 'critical' ? 'alert' : 'status'}
+              {...stylex.props(s.feedbackBox, feedback.tone === 'critical' ? s.feedbackError : s.feedbackSuccess)}
+            >
+              <StatusDot tone={feedback.tone} />
+              <span>{feedback.text}</span>
+            </div>
           )}
 
           {showCreate && (
             <Panel title="Criar nova instância" subtitle="Pull automático via images.linuxcontainers.org (pode levar até 2 min no primeiro download)">
-              <form {...stylex.props(layout.stack)} onSubmit={handleCreate}>
+              <form {...stylex.props(layout.stack)} onSubmit={handleCreate} noValidate>
                 <div {...stylex.props(s.formGrid)}>
-                  <TextField label="Nome" value={newName} onChange={e => setNewName(e.target.value)} placeholder="ex: app-01" required />
+                  <TextField
+                    label="Nome"
+                    value={newName}
+                    onChange={e => setNewName(e.target.value)}
+                    placeholder="ex: app-01"
+                    error={nameError}
+                    required
+                  />
                   <SelectField label="Tipo" value={newType} onChange={e => setNewType(e.target.value as 'container' | 'virtual-machine')}>
                     <option value="container">System Container (LXC)</option>
                     <option value="virtual-machine">Virtual Machine (KVM/QEMU)</option>
@@ -269,10 +357,50 @@ export function InstancesPage() {
                     <option value="__custom__">Outra (remote:alias)…</option>
                   </SelectField>
                   {newImage === '__custom__' && (
-                    <TextField label="Alias customizado" value={customImage} onChange={e => setCustomImage(e.target.value)} placeholder="images:ubuntu/24.04" required />
+                    <TextField
+                      label="Alias customizado"
+                      value={customImage}
+                      onChange={e => setCustomImage(e.target.value)}
+                      placeholder="images:ubuntu/24.04"
+                      error={customImageError}
+                      required
+                    />
                   )}
-                  <TextField label="Limite de CPU (vCPUs)" value={newCPU} onChange={e => setNewCPU(e.target.value)} placeholder="ex: 2" />
-                  <TextField label="Limite de RAM" value={newMem} onChange={e => setNewMem(e.target.value)} placeholder="ex: 2GiB" />
+                  <TextField
+                    label="Limite de CPU (vCPUs)"
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    max={128}
+                    step={1}
+                    value={newCPU}
+                    onChange={e => setNewCPU(e.target.value.replace(/[^0-9]/g, ''))}
+                    placeholder="Sem limite"
+                    error={cpuError}
+                  />
+                  <TextField
+                    label="Limite de RAM"
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    max={memMax}
+                    step={1}
+                    value={newMemValue}
+                    onChange={e => setNewMemValue(e.target.value.replace(/[^0-9]/g, ''))}
+                    placeholder="Sem limite"
+                    error={memError}
+                    action={
+                      <select
+                        aria-label="Unidade de RAM"
+                        value={newMemUnit}
+                        onChange={e => setNewMemUnit(e.target.value as 'MiB' | 'GiB')}
+                        {...stylex.props(s.unitSelect)}
+                      >
+                        <option value="MiB">MiB</option>
+                        <option value="GiB">GiB</option>
+                      </select>
+                    }
+                  />
                   <SelectField label="Perfil" value={newProfile} onChange={e => setNewProfile(e.target.value)}>
                     {(resourcesQuery.data?.profiles.length ? resourcesQuery.data.profiles : [{ name: 'default', used_by_count: 0 }]).map(p => (
                       <option key={p.name} value={p.name}>{p.name}</option>
@@ -287,7 +415,7 @@ export function InstancesPage() {
                   </label>
                   <div {...stylex.props(layout.row)}>
                     <Button type="button" variant="outline" onClick={() => setShowCreate(false)}>Cancelar</Button>
-                    <Button type="submit" variant="primary" busy={createMutation.isPending} disabled={!newName.trim()}>
+                    <Button type="submit" variant="primary" busy={createMutation.isPending} disabled={!formValid}>
                       {createMutation.isPending ? 'Criando…' : 'Criar instância'}
                     </Button>
                   </div>
