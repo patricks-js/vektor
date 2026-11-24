@@ -1,5 +1,5 @@
 import * as stylex from '@stylexjs/stylex'
-import { FileText, Play, RefreshCw, RotateCw, Skull, Square, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, FileText, Play, RefreshCw, RotateCw, Skull, Square, X } from 'lucide-react'
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Badge, Button, Empty, ErrorState, Loading, Modal, Panel, SelectField, StatusDot, TextField, layout, tableStyles } from '../../components/ui/ui'
@@ -26,6 +26,8 @@ const s = stylex.create({
   prioWarn: { color: 'var(--vk-warning)', fontWeight: 600 },
   prioInfo: { color: 'var(--vk-text-secondary)' },
 })
+
+const pageSize = 15
 
 const actionLabels: Record<ServiceAction, string> = {
   start: 'Iniciar',
@@ -93,6 +95,7 @@ export function ServicesView() {
   const cache = useQueryClient()
   const [stateFilter, setStateFilter] = useState<'all' | 'active' | 'failed' | 'inactive'>('all')
   const [search, setSearch] = useState('')
+  const [page, setPage] = useState(0)
   const [selectedUnit, setSelectedUnit] = useState<string>()
   const [pendingAction, setPendingAction] = useState<{ unit: string; action: ServiceAction }>()
   const [busy, setBusy] = useState(false)
@@ -110,6 +113,9 @@ export function ServicesView() {
   const items = (query.data ?? []).filter(svc =>
     `${svc.name} ${svc.description}`.toLocaleLowerCase().includes(term),
   )
+  const pages = Math.ceil(items.length / pageSize)
+  const currentPage = Math.min(page, Math.max(0, pages - 1))
+  const visible = items.slice(currentPage * pageSize, (currentPage + 1) * pageSize)
 
   async function confirmServiceAction() {
     if (!pendingAction) return
@@ -137,8 +143,8 @@ export function ServicesView() {
         </Button>
       }>
         <div {...stylex.props(tableStyles.filters)}>
-          <TextField label="Buscar serviço" placeholder="Filtrar por nome ou descrição…" value={search} onChange={e => setSearch(e.currentTarget.value)} type="search" />
-          <SelectField label="Estado" value={stateFilter} onChange={e => setStateFilter(e.currentTarget.value as 'all' | 'active' | 'failed' | 'inactive')}>
+          <TextField label="Buscar serviço" placeholder="Filtrar por nome ou descrição…" value={search} onChange={e => { setSearch(e.currentTarget.value); setPage(0) }} type="search" />
+          <SelectField label="Estado" value={stateFilter} onChange={e => { setStateFilter(e.currentTarget.value as 'all' | 'active' | 'failed' | 'inactive'); setPage(0) }}>
             <option value="all">Todos</option>
             <option value="active">Ativos</option>
             <option value="failed">Com falha</option>
@@ -148,7 +154,7 @@ export function ServicesView() {
         {feedback && <p role="status" {...stylex.props(layout.small)}>{feedback}</p>}
         {query.isPending && <Loading label="Listando serviços…" />}
         {query.isError && <ErrorState error={query.error} retry={() => { void query.refetch() }} title="Não foi possível listar serviços" />}
-        {query.data && (items.length === 0 ? <Empty>Nenhum serviço corresponde aos filtros.</Empty> : (
+        {query.data && (visible.length === 0 ? <Empty>Nenhum serviço corresponde aos filtros.</Empty> : <>
           <div tabIndex={0} role="region" aria-label="Tabela de serviços systemd" {...stylex.props(tableStyles.scroll)}>
             <table {...stylex.props(tableStyles.table, s.wideTable)} aria-label="Serviços systemd">
               <thead><tr>
@@ -159,7 +165,7 @@ export function ServicesView() {
                 <th scope="col" {...stylex.props(tableStyles.th)}>Ações</th>
               </tr></thead>
               <tbody>
-                {items.map(svc => {
+                {visible.map(svc => {
                   const tone = svc.active_state === 'failed' ? 'critical' : svc.active_state === 'active' ? 'success' : 'neutral'
                   const isSelf = svc.name === 'vektord.service'
                   return (
@@ -200,7 +206,14 @@ export function ServicesView() {
               </tbody>
             </table>
           </div>
-        ))}
+          {pages > 1 && <div {...stylex.props(layout.split)}>
+            <p {...stylex.props(layout.small)}>Página {currentPage + 1} de {pages} · {items.length} serviços</p>
+            <div {...stylex.props(layout.row)}>
+              <Button aria-label="Página anterior" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}><ChevronLeft size={16} aria-hidden /></Button>
+              <Button aria-label="Próxima página" disabled={currentPage + 1 === pages} onClick={() => setPage(currentPage + 1)}><ChevronRight size={16} aria-hidden /></Button>
+            </div>
+          </div>}
+        </>)}
       </Panel>
 
       <Modal title={pendingAction ? `${actionLabels[pendingAction.action]} serviço` : 'Confirmar ação'}
@@ -229,6 +242,7 @@ export function ProcessesView() {
   const cache = useQueryClient()
   const [sort, setSort] = useState<'cpu' | 'memory'>('cpu')
   const [search, setSearch] = useState('')
+  const [page, setPage] = useState(0)
   const [target, setTarget] = useState<ProcessInfo>()
   const [busy, setBusy] = useState(false)
   const [feedback, setFeedback] = useState('')
@@ -245,6 +259,9 @@ export function ProcessesView() {
   const items = (query.data ?? []).filter(proc =>
     `${proc.pid} ${proc.name} ${proc.command} ${proc.user}`.toLocaleLowerCase().includes(term),
   )
+  const pages = Math.ceil(items.length / pageSize)
+  const currentPage = Math.min(page, Math.max(0, pages - 1))
+  const visible = items.slice(currentPage * pageSize, (currentPage + 1) * pageSize)
 
   async function sendSignal(sig: 'TERM' | 'KILL') {
     if (!target) return
@@ -271,8 +288,8 @@ export function ProcessesView() {
         </Button>
       }>
         <div {...stylex.props(tableStyles.filters)}>
-          <TextField label="Buscar processo" placeholder="PID, nome, comando ou usuário…" value={search} onChange={e => setSearch(e.currentTarget.value)} type="search" />
-          <SelectField label="Ordenar por" value={sort} onChange={e => setSort(e.currentTarget.value === 'memory' ? 'memory' : 'cpu')}>
+          <TextField label="Buscar processo" placeholder="PID, nome, comando ou usuário…" value={search} onChange={e => { setSearch(e.currentTarget.value); setPage(0) }} type="search" />
+          <SelectField label="Ordenar por" value={sort} onChange={e => { setSort(e.currentTarget.value === 'memory' ? 'memory' : 'cpu'); setPage(0) }}>
             <option value="cpu">Uso de CPU</option>
             <option value="memory">Memória (RSS)</option>
           </SelectField>
@@ -280,7 +297,7 @@ export function ProcessesView() {
         {feedback && <p role="status" {...stylex.props(layout.small)}>{feedback}</p>}
         {query.isPending && <Loading label="Lendo processos…" />}
         {query.isError && <ErrorState error={query.error} retry={() => { void query.refetch() }} title="Não foi possível listar processos" />}
-        {query.data && (items.length === 0 ? <Empty>Nenhum processo corresponde à busca.</Empty> : (
+        {query.data && (visible.length === 0 ? <Empty>Nenhum processo corresponde à busca.</Empty> : <>
           <div tabIndex={0} role="region" aria-label="Tabela de processos" {...stylex.props(tableStyles.scroll)}>
             <table {...stylex.props(tableStyles.table, s.wideTable)} aria-label="Processos ativos">
               <thead><tr>
@@ -293,7 +310,7 @@ export function ProcessesView() {
                 <th scope="col" {...stylex.props(tableStyles.th)}>Ações</th>
               </tr></thead>
               <tbody>
-                {items.map(proc => (
+                {visible.map(proc => (
                   <tr key={proc.pid} {...stylex.props(tableStyles.row)}>
                     <td {...stylex.props(tableStyles.td, s.num)}>{proc.pid}</td>
                     <th scope="row" {...stylex.props(tableStyles.td)}>
@@ -316,7 +333,14 @@ export function ProcessesView() {
               </tbody>
             </table>
           </div>
-        ))}
+          {pages > 1 && <div {...stylex.props(layout.split)}>
+            <p {...stylex.props(layout.small)}>Página {currentPage + 1} de {pages} · {items.length} processos</p>
+            <div {...stylex.props(layout.row)}>
+              <Button aria-label="Página anterior" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}><ChevronLeft size={16} aria-hidden /></Button>
+              <Button aria-label="Próxima página" disabled={currentPage + 1 === pages} onClick={() => setPage(currentPage + 1)}><ChevronRight size={16} aria-hidden /></Button>
+            </div>
+          </div>}
+        </>)}
       </Panel>
 
       <Modal title="Encerrar processo" open={Boolean(target)} preventClose={busy}

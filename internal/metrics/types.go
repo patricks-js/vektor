@@ -68,10 +68,13 @@ func (c *RealClock) Elapsed() time.Duration {
 }
 
 // Synchronized reads the Linux clock discipline status without adjusting the clock.
+// Matches systemd-timedated's ntp_synced() check: consider the clock synchronized while
+// maxerror is below Linux's 16s NTP_PHASE_LIMIT, ignoring STA_UNSYNC (which clients like
+// systemd-timesyncd may leave set to prevent the kernel from writing to the RTC).
 func (c *RealClock) Synchronized() bool {
 	var timex unix.Timex
-	state, err := unix.Adjtimex(&timex)
-	return err == nil && state != unix.TIME_ERROR && timex.Maxerror >= 0 && timex.Maxerror <= 5_000_000
+	_, err := unix.Adjtimex(&timex)
+	return err == nil && timex.Maxerror >= 0 && timex.Maxerror < 16_000_000
 }
 
 // FakeClock is a thread-safe deterministic Clock for unit and integration tests.
