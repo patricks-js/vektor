@@ -16,10 +16,13 @@ import (
 	"time"
 
 	"vektor/internal/alerts"
+	"vektor/internal/audit"
 	"vektor/internal/auth"
 	"vektor/internal/config"
+	"vektor/internal/ctl"
 	"vektor/internal/database"
 	"vektor/internal/history"
+	"vektor/internal/hostmgmt"
 	"vektor/internal/metrics/scheduler"
 )
 
@@ -43,6 +46,9 @@ type API struct {
 	alerts   *alerts.Store
 	notifier *alerts.Notifier
 	updates  *updateChecker
+	mgmt     *hostmgmt.Manager
+	ctl      *ctl.Client
+	audit    *audit.Store
 	hub      *scheduler.LiveHub
 	mux      *http.ServeMux
 	ui       http.Handler
@@ -88,6 +94,13 @@ func New(cfg config.HTTPConfig, queries *history.QueryService, sessions *auth.St
 	a.route(http.MethodPost, apiPath+"/alerts/channels/test", true, a.testAlertChannel)
 	a.route(http.MethodGet, apiPath+"/alerts/events", true, a.listAlertEvents)
 	a.route(http.MethodGet, apiPath+"/update", true, a.update)
+	a.route(http.MethodGet, apiPath+"/processes", true, a.processes)
+	a.route(http.MethodPost, apiPath+"/processes/{pid}/signal", true, a.processSignal)
+	a.route(http.MethodGet, apiPath+"/services", true, a.services)
+	a.route(http.MethodGet, apiPath+"/services/{name}/logs", true, a.serviceLogs)
+	a.route(http.MethodPost, apiPath+"/services/{name}/action", true, a.serviceAction)
+	a.route(http.MethodPost, apiPath+"/host/power", true, a.hostPower)
+	a.route(http.MethodGet, apiPath+"/audit", true, a.listAudit)
 	a.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if a.ui != nil && r.URL.Path != "/api" && !strings.HasPrefix(r.URL.Path, "/api/") {
 			a.ui.ServeHTTP(w, r)
@@ -114,6 +127,19 @@ func (a *API) WithAlerts(store *alerts.Store, notifier *alerts.Notifier) *API {
 // WithVersion enables release update checks against GitHub Releases.
 func (a *API) WithVersion(current string) *API {
 	a.updates = newUpdateChecker(current)
+	return a
+}
+
+// WithHostMgmt attaches read-only host operational visibility (processes, services, logs).
+func (a *API) WithHostMgmt(mgmt *hostmgmt.Manager) *API {
+	a.mgmt = mgmt
+	return a
+}
+
+// WithControl attaches the privileged vektor-ctl IPC client and SQLite audit store.
+func (a *API) WithControl(client *ctl.Client, auditStore *audit.Store) *API {
+	a.ctl = client
+	a.audit = auditStore
 	return a
 }
 

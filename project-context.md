@@ -20,7 +20,7 @@ A proposta é combinar a simplicidade e a experiência de monitoramento do Besze
 - Disponibilizar métricas em tempo real e histórico de utilização.
 - Oferecer alertas configuráveis e notificações.
 - Gerenciar recursos e serviços do próprio host.
-- Gerenciar máquinas virtuais utilizando KVM/QEMU e libvirt.
+- Gerenciar máquinas virtuais e system containers utilizando **Incus** (KVM/QEMU + LXC).
 - Monitorar e gerenciar containers.
 - Oferecer snapshots, backups e recuperação de workloads.
 - Disponibilizar uma interface web intuitiva e uma API documentada.
@@ -54,8 +54,9 @@ O desenvolvimento será incremental, priorizando funcionalidades utilizáveis em
 | Persistência | SQLite |
 | API | REST |
 | Atualizações em tempo real | Server-Sent Events |
-| Integração Linux | /proc, /sys, D-Bus e APIs nativas |
-| Virtualização futura | KVM/QEMU + libvirt |
+| Integração Linux | /proc, /sys, D-Bus, systemd/journald e APIs nativas |
+| Virtualização futura | Incus (KVM/QEMU + system containers) |
+| Separação de privilégios | `vektord` sem privilégios + helper sob demanda (`vektor-ctl.socket`) |
 | Distribuição | Binários nativos + systemd + pacote .deb |
 
 O `vektord` é um monólito modular em execução não privilegiada. A v0.1 já reúne coleta e persistência no mesmo processo. A v0.2 expõe esse pipeline por REST autenticado e SSE sob demanda. Integrações privilegiadas futuras poderão usar um componente separado. [Decisão de processo](docs/adr/ADR-001-process-and-sqlite-architecture.md) · [API da v0.2](docs/API_V0.2.md)
@@ -84,9 +85,9 @@ O MVP não incluirá inicialmente gerenciamento de VMs, containers, alterações
 
 **Fase 1 — Host Monitoring:** métricas, dashboard, histórico e alertas.
 
-**Fase 2 — Host Management:** gerenciamento controlado de serviços, recursos e operações administrativas do Linux.
+**Fase 2 — Host Management:** processos, serviços `systemd`, logs `journald`, ações controladas via `vektor-ctl.socket` e auditoria ([ADR-006](docs/adr/ADR-006-privilege-separation-and-host-management.md)).
 
-**Fase 3 — Virtual Machines:** integração com libvirt, gerenciamento do ciclo de vida de VMs, provisionamento e console.
+**Fase 3 — Virtual Machines & System Containers (Incus):** integração com a API nativa do Incus para ciclo de vida de instâncias, provisionamento e console.
 
 **Fase 4 — Storage & Backups:** volumes, snapshots, backups e restauração de workloads.
 

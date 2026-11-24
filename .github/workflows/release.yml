@@ -103,10 +103,16 @@ jobs:
               -tags webui -trimpath \
               -ldflags="-s -w -X main.version=${VERSION}" \
               -o "${STAGE}/vektord" ./cmd/vektord
+            CGO_ENABLED=0 GOOS=linux GOARCH="${ARCH}" go build \
+              -trimpath \
+              -ldflags="-s -w -X main.version=${VERSION}" \
+              -o "${STAGE}/vektor-ctl" ./cmd/vektor-ctl
 
             install -d "${STAGE}/packaging/systemd"
             install -m 0755 packaging/install.sh "${STAGE}/packaging/install.sh"
             install -m 0644 packaging/systemd/vektord.service "${STAGE}/packaging/systemd/vektord.service"
+            install -m 0644 packaging/systemd/vektor-ctl.socket "${STAGE}/packaging/systemd/vektor-ctl.socket"
+            install -m 0644 packaging/systemd/vektor-ctl.service "${STAGE}/packaging/systemd/vektor-ctl.service"
             install -m 0644 packaging/systemd/vektord.env "${STAGE}/packaging/systemd/vektord.env"
             install -m 0644 README.md "${STAGE}/README.md"
 

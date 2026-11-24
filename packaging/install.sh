@@ -18,6 +18,9 @@ fi
 if ! id -u vektor >/dev/null 2>&1; then
   useradd --system --home-dir /var/lib/vektor --shell /usr/sbin/nologin --user-group vektor
 fi
+if getent group systemd-journal >/dev/null 2>&1; then
+  usermod -aG systemd-journal vektor || true
+fi
 
 install -d -m 0750 -o vektor -g vektor /var/lib/vektor
 install -d -m 0750 -o root -g vektor /etc/vektor

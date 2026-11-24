@@ -1,5 +1,5 @@
 import * as stylex from '@stylexjs/stylex'
-import { ArrowUpRight, Bell, FileText, LogOut, Send, SlidersHorizontal, UserRound } from 'lucide-react'
+import { ArrowUpRight, Bell, FileText, History, LogOut, Power, Send, SlidersHorizontal, UserRound } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { isRange, isTheme, isTimeZone, ranges, usePreferences } from '../../app/preferences'
 import { Facts } from '../../components/ui/dashboard'
@@ -9,6 +9,7 @@ import { dateTime, timeZoneLabel } from '../metrics/format'
 import { useSession } from '../auth/session'
 import fontLicenses from '../../styles/geist-license.txt?url'
 import { AlertsSection, NotificationsSection } from './AlertsSettings'
+import { AuditLogSection, HostPowerSection } from './HostControlSettings'
 
 const s = stylex.create({
   card: {
@@ -68,6 +69,8 @@ const sections = [
   { id: 'geral', label: 'Geral', icon: SlidersHorizontal },
   { id: 'alertas', label: 'Alertas', icon: Bell },
   { id: 'notificacoes', label: 'Notificações', icon: Send },
+  { id: 'energia', label: 'Energia', icon: Power },
+  { id: 'auditoria', label: 'Auditoria', icon: History },
   { id: 'sessao', label: 'Sessão', icon: UserRound },
   { id: 'sobre', label: 'Sobre', icon: FileText },
 ] as const
@@ -169,6 +172,22 @@ export function SettingsPage() {
                 <p {...stylex.props(layout.small)}>Envie alertas via Webhook HTTP (POST JSON) para seus canais.</p>
               </div>
               <NotificationsSection />
+            </section>
+
+            <section id="energia" aria-labelledby="settings-power" {...stylex.props(s.section)}>
+              <div {...stylex.props(s.sectionHead)}>
+                <h2 id="settings-power" {...stylex.props(layout.sectionTitle)}>Energia do servidor</h2>
+                <p {...stylex.props(layout.small)}>Reinicie ou desligue o host de forma controlada via vektor-ctl.socket.</p>
+              </div>
+              <HostPowerSection />
+            </section>
+
+            <section id="auditoria" aria-labelledby="settings-audit" {...stylex.props(s.section)}>
+              <div {...stylex.props(s.sectionHead)}>
+                <h2 id="settings-audit" {...stylex.props(layout.sectionTitle)}>Auditoria</h2>
+                <p {...stylex.props(layout.small)}>Registro das últimas ações administrativas executadas pelo painel.</p>
+              </div>
+              <AuditLogSection />
             </section>
 
             <section id="sessao" aria-labelledby="settings-session" {...stylex.props(s.section)}>

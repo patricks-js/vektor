@@ -20,6 +20,7 @@ import { TimeRangeSelector, usePeriodLink } from '../metrics/range'
 import { LiveValue, PersistedValue } from '../metrics/readings'
 import { ResourceTable } from './ResourceTable'
 import type { ResourceColumn } from './ResourceTable'
+import { ProcessesView, ServicesView } from './HostOperations'
 import { displayName, metadata, metadataText } from './resourceMetadata'
 
 const s = stylex.create({
@@ -189,7 +190,7 @@ function SensorsOverviewChart() {
   return <TemperatureChartPanel sensors={active} />
 }
 
-function HostResources({ tab, host, singleColumn }: { tab: Exclude<HostTab, 'cpu' | 'memory'>; host?: Host; singleColumn: boolean }) {
+function HostResources({ tab, host, singleColumn }: { tab: Extract<HostTab, 'storage' | 'network' | 'sensors'>; host?: Host; singleColumn: boolean }) {
   const [search] = useSearchParams()
   const link = usePeriodLink()
   const selected = search.get('resource') ?? undefined
@@ -233,6 +234,8 @@ const descriptions: Record<HostTab, string> = {
   storage: 'Capacidade por montagem e atividade por dispositivo',
   network: 'Tráfego, erros e descartes por interface',
   sensors: 'Leituras do coletor de temperatura',
+  services: 'Serviços systemd e logs recentes do journald',
+  processes: 'Processos ativos ordenados por CPU ou memória',
 }
 
 export function HostPage() {
@@ -281,8 +284,11 @@ export function HostPage() {
         {host.isPending && <Loading label="Consultando inventário do host…" />}
         {host.isError && <ErrorState error={host.error} retry={() => { void host.refetch() }} title="Inventário do host indisponível" />}
         <ChartCursorProvider key={subsystem}>
-          {subsystem === 'cpu' ? <CpuView host={host.data} singleColumn={singleColumn} /> : subsystem === 'memory' ? <MemoryView host={host.data} singleColumn={singleColumn} /> :
-            <HostResources key={subsystem} tab={subsystem} host={host.data} singleColumn={singleColumn} />}
+          {subsystem === 'cpu' ? <CpuView host={host.data} singleColumn={singleColumn} />
+            : subsystem === 'memory' ? <MemoryView host={host.data} singleColumn={singleColumn} />
+            : subsystem === 'services' ? <ServicesView />
+            : subsystem === 'processes' ? <ProcessesView />
+            : <HostResources key={subsystem} tab={subsystem} host={host.data} singleColumn={singleColumn} />}
         </ChartCursorProvider>
       </div>
     </div>

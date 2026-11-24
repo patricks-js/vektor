@@ -1,0 +1,13 @@
+[Unit]
+Description=Vektor Privileged Control Socket
+Documentation=https://github.com/patricks-js/vektor
+
+[Socket]
+ListenStream=/run/vektor/ctl.sock
+SocketUser=root
+SocketGroup=vektor
+SocketMode=0660
+DirectoryMode=0750
+
+[Install]
+WantedBy=sockets.target

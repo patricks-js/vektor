@@ -75,6 +75,10 @@ export async function fixture(page: Page, options: {
     if (path === 'alerts/channels') return route.fulfill({ json: { channels: [] } })
     if (path === 'alerts/events') return route.fulfill({ json: { events: [] } })
     if (path === 'update') return route.fulfill({ json: { current_version: '0.4.1', latest_version: '0.4.1', update_available: false } })
+    if (path === 'processes') return route.fulfill({ json: { processes: [] } })
+    if (path === 'services') return route.fulfill({ json: { services: [] } })
+    if (path.startsWith('services/') && path.endsWith('/logs')) return route.fulfill({ json: { unit: 'vektord.service', entries: [] } })
+    if (path === 'audit') return route.fulfill({ json: { entries: [] } })
     if (path === 'metrics') {
       const metric_key = url.searchParams.get('metric')!
       const resource_id = url.searchParams.get('resource_id')!

@@ -8,6 +8,7 @@ Wants=network-online.target
 Type=simple
 User=vektor
 Group=vektor
+SupplementaryGroups=systemd-journal
 EnvironmentFile=-/etc/vektor/vektord.env
 ExecStart=/usr/bin/vektord --data-dir /var/lib/vektor
 Restart=on-failure

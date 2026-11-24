@@ -10,9 +10,12 @@ import (
 	"time"
 
 	"vektor/internal/alerts"
+	"vektor/internal/audit"
 	"vektor/internal/auth"
 	"vektor/internal/config"
+	"vektor/internal/ctl"
 	"vektor/internal/history"
+	"vektor/internal/hostmgmt"
 	"vektor/internal/httpapi"
 	"vektor/internal/metrics/scheduler"
 	"vektor/web"
@@ -20,7 +23,8 @@ import (
 
 func runDaemon(parent context.Context, cfg config.HTTPConfig, logger *slog.Logger, sched *scheduler.Scheduler,
 	queries *history.QueryService, sessions *auth.Store, hub *scheduler.LiveHub,
-	alertStore *alerts.Store, alertNotifier *alerts.Notifier, alertEval *alerts.Evaluator) error {
+	alertStore *alerts.Store, alertNotifier *alerts.Notifier, alertEval *alerts.Evaluator,
+	mgmt *hostmgmt.Manager, ctlClient *ctl.Client, auditStore *audit.Store) error {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", cfg.ListenAddr)
@@ -34,6 +38,8 @@ func runDaemon(parent context.Context, cfg config.HTTPConfig, logger *slog.Logge
 
 	server := httpapi.New(cfg, queries, sessions, hub).
 		WithAlerts(alertStore, alertNotifier).
+		WithHostMgmt(mgmt).
+		WithControl(ctlClient, auditStore).
 		WithVersion(version).
 		WithUI(web.Handler()).
 		Server(ctx)

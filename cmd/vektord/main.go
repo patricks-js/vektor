@@ -16,11 +16,14 @@ import (
 	"time"
 
 	"vektor/internal/alerts"
+	"vektor/internal/audit"
 	"vektor/internal/auth"
 	"vektor/internal/config"
+	"vektor/internal/ctl"
 	"vektor/internal/database"
 	"vektor/internal/history"
 	"vektor/internal/host"
+	"vektor/internal/hostmgmt"
 	"vektor/internal/metrics"
 	"vektor/internal/metrics/collector"
 	"vektor/internal/metrics/scheduler"
@@ -211,8 +214,11 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	alertStore := alerts.NewStore(db)
 	alertNotifier := alerts.NewNotifier()
 	alertEval := alerts.NewEvaluator(alertStore, alertNotifier, logger)
+	mgmt := hostmgmt.New(cfg.ProcRoot)
+	auditStore := audit.NewStore(db)
+	ctlClient := ctl.NewClient(envOrDefault("VEKTOR_CTL_SOCKET", ctl.DefaultSocketPath))
 
-	return runDaemon(ctx, cfg.HTTP, logger, sched, qs, sessions, hub, alertStore, alertNotifier, alertEval)
+	return runDaemon(ctx, cfg.HTTP, logger, sched, qs, sessions, hub, alertStore, alertNotifier, alertEval, mgmt, ctlClient, auditStore)
 }
 
 func applyHTTPEnv(cfg *config.HTTPConfig) error {

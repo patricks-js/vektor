@@ -72,6 +72,46 @@ export type UpdateInfo = {
   checked_at?: string
 }
 
+export type ProcessInfo = {
+  pid: number
+  ppid: number
+  name: string
+  command: string
+  user: string
+  state: string
+  cpu_percent: number
+  rss_bytes: number
+  threads: number
+}
+
+export type ServiceInfo = {
+  name: string
+  load_state: string
+  active_state: string
+  sub_state: string
+  unit_file_state?: string
+  description: string
+}
+
+export type LogEntry = {
+  timestamp_ms: number
+  priority: 'err' | 'warning' | 'info' | 'debug'
+  unit?: string
+  message: string
+}
+
+export type AuditEntry = {
+  id: number
+  actor: string
+  action: string
+  target: string
+  status: 'ok' | 'error'
+  detail?: string
+  created_at_ms: number
+}
+
+export type ServiceAction = 'start' | 'stop' | 'restart' | 'reload' | 'enable' | 'disable'
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -118,7 +158,7 @@ function requestSlots() {
 export function createApi(onUnauthorized?: () => void) {
   const schedule = requestSlots()
 
-  async function send<T>(path: ApiPaths | `/api/v1/resources/${string}` | `/api/v1/alerts/${string}` | '/api/v1/update', init?: RequestInit, params?: Record<string, string>) {
+  async function send<T>(path: ApiPaths | `/api/v1/resources/${string}` | `/api/v1/alerts/${string}` | '/api/v1/update' | '/api/v1/processes' | `/api/v1/processes/${number}/signal` | '/api/v1/services' | `/api/v1/services/${string}/logs` | `/api/v1/services/${string}/action` | '/api/v1/host/power' | '/api/v1/audit', init?: RequestInit, params?: Record<string, string>) {
     const url = params ? `${path}?${new URLSearchParams(params)}` : path
     let response: Response
     try {
@@ -139,7 +179,7 @@ export function createApi(onUnauthorized?: () => void) {
     return response.json() as Promise<T>
   }
 
-  function request<T>(path: ApiPaths | `/api/v1/resources/${string}` | `/api/v1/alerts/${string}` | '/api/v1/update', init?: RequestInit, params?: Record<string, string>) {
+  function request<T>(path: ApiPaths | `/api/v1/resources/${string}` | `/api/v1/alerts/${string}` | '/api/v1/update' | '/api/v1/processes' | `/api/v1/processes/${number}/signal` | '/api/v1/services' | `/api/v1/services/${string}/logs` | `/api/v1/services/${string}/action` | '/api/v1/host/power' | '/api/v1/audit', init?: RequestInit, params?: Record<string, string>) {
     return schedule(init?.signal, () => send<T>(path, init, params))
   }
 
@@ -210,6 +250,32 @@ export function createApi(onUnauthorized?: () => void) {
       }),
     alertEvents: async (signal: AbortSignal) => (await request<{ events: AlertEvent[] }>('/api/v1/alerts/events', { signal })).events,
     update: (signal: AbortSignal) => request<UpdateInfo>('/api/v1/update', { signal }),
+    processes: async (sort: 'cpu' | 'memory', limit: number, signal: AbortSignal) =>
+      (await request<{ processes: ProcessInfo[] }>('/api/v1/processes', { signal }, { sort, limit: String(limit) })).processes,
+    services: async (state: 'all' | 'active' | 'failed' | 'inactive', signal: AbortSignal) =>
+      (await request<{ services: ServiceInfo[] }>('/api/v1/services', { signal }, { state })).services,
+    serviceLogs: async (unit: string, lines: number, priority: 'all' | 'info' | 'warning' | 'err', signal: AbortSignal) =>
+      (await request<{ unit: string; entries: LogEntry[] }>(`/api/v1/services/${encodeURIComponent(unit)}/logs`, { signal }, {
+        lines: String(lines),
+        ...(priority !== 'all' ? { priority } : {}),
+      })).entries,
+    serviceAction: (session: Session, unit: string, action: ServiceAction, signal?: AbortSignal) =>
+      request<{ ok: boolean; message?: string }>(`/api/v1/services/${encodeURIComponent(unit)}/action`, {
+        method: 'POST', signal, body: JSON.stringify({ action }),
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': session.csrf_token },
+      }),
+    processSignal: (session: Session, pid: number, sig: 'TERM' | 'KILL', signal?: AbortSignal) =>
+      request<{ ok: boolean; message?: string }>(`/api/v1/processes/${pid}/signal`, {
+        method: 'POST', signal, body: JSON.stringify({ signal: sig }),
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': session.csrf_token },
+      }),
+    hostPower: (session: Session, action: 'reboot' | 'poweroff', signal?: AbortSignal) =>
+      request<{ ok: boolean; message?: string }>('/api/v1/host/power', {
+        method: 'POST', signal, body: JSON.stringify({ action }),
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': session.csrf_token },
+      }),
+    auditLog: async (signal: AbortSignal, limit = 50) =>
+      (await request<{ entries: AuditEntry[] }>('/api/v1/audit', { signal }, { limit: String(limit) })).entries,
   }
 }
 

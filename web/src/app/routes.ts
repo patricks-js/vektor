@@ -4,6 +4,8 @@ export const hostTabs = [
   { id: 'storage', label: 'Armazenamento' },
   { id: 'network', label: 'Rede' },
   { id: 'sensors', label: 'Sensores' },
+  { id: 'services', label: 'Serviços' },
+  { id: 'processes', label: 'Processos' },
 ] as const
 
 export type HostTab = typeof hostTabs[number]['id']

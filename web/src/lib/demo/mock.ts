@@ -1,5 +1,5 @@
 import { ApiError } from '../api/client'
-import type { AlertChannel, AlertEvent, AlertRule, Api, Health, Host, Resource, ResourceKind, Series, SeriesPoint, Session, Step } from '../api/client'
+import type { AlertChannel, AlertEvent, AlertRule, Api, AuditEntry, Health, Host, LogEntry, ProcessInfo, Resource, ResourceKind, Series, SeriesPoint, ServiceInfo, Session, Step } from '../api/client'
 import type { LiveStore, TransportState } from '../realtime/store'
 import type { LivePoint } from '../realtime/stream'
 import { metric } from '../../features/metrics/catalog'
@@ -16,7 +16,18 @@ let cachedResources: Resource[] | undefined
 let demoRules: AlertRule[] | undefined
 let demoChannels: AlertChannel[] | undefined
 let demoEvents: AlertEvent[] | undefined
+let demoAudit: AuditEntry[] | undefined
 let nextAlertId = 10
+
+function getDemoAudit() {
+  if (!demoAudit) {
+    const now = Date.now()
+    demoAudit = [
+      { id: 1, actor: 'admin', action: 'service.restart', target: 'caddy.service', status: 'ok', detail: 'systemctl restart caddy.service completed', created_at_ms: now - 3_600_000 },
+    ]
+  }
+  return demoAudit
+}
 
 function getDemoAlertState() {
   if (!demoRules) {
@@ -448,6 +459,84 @@ export function createDemoApi(onUnauthorized?: () => void): Api {
         update_available: false,
         checked_at: new Date().toISOString(),
       }
+    },
+    async processes(sort, limit, signal): Promise<ProcessInfo[]> {
+      checkAbort(signal)
+      requireSession()
+      const t = Date.now()
+      const items: ProcessInfo[] = [
+        { pid: 1420, ppid: 1, name: 'incusd', command: '/usr/libexec/incus/incusd --group incus-admin', user: 'root', state: 'S', cpu_percent: 4.2 + Math.abs(wave(t, 0.2)) * 3, rss_bytes: 412 * MiB, threads: 28 },
+        { pid: 984, ppid: 1, name: 'vektord', command: '/usr/bin/vektord --data-dir /var/lib/vektor', user: 'vektor', state: 'S', cpu_percent: 0.4 + Math.abs(wave(t, 0.4)) * 0.4, rss_bytes: 28 * MiB, threads: 9 },
+        { pid: 1810, ppid: 1, name: 'postgres', command: '/usr/lib/postgresql/16/bin/postgres -D /var/lib/postgresql/16/main', user: 'postgres', state: 'S', cpu_percent: 3.1 + Math.abs(wave(t, 0.7)) * 4, rss_bytes: 860 * MiB, threads: 12 },
+        { pid: 2104, ppid: 1, name: 'caddy', command: '/usr/bin/caddy run --environ --config /etc/caddy/Caddyfile', user: 'caddy', state: 'S', cpu_percent: 1.3 + Math.abs(wave(t, 0.5)) * 1.5, rss_bytes: 94 * MiB, threads: 14 },
+        { pid: 612, ppid: 1, name: 'systemd-journald', command: '/usr/lib/systemd/systemd-journald', user: 'root', state: 'S', cpu_percent: 0.2, rss_bytes: 48 * MiB, threads: 1 },
+        { pid: 842, ppid: 1, name: 'sshd', command: 'sshd: /usr/sbin/sshd -D', user: 'root', state: 'S', cpu_percent: 0.1, rss_bytes: 14 * MiB, threads: 1 },
+      ]
+      items.sort((a, b) => sort === 'memory' ? b.rss_bytes - a.rss_bytes : b.cpu_percent - a.cpu_percent)
+      return items.slice(0, limit)
+    },
+    async services(state, signal): Promise<ServiceInfo[]> {
+      checkAbort(signal)
+      requireSession()
+      const all: ServiceInfo[] = [
+        { name: 'backup-sync.service', load_state: 'loaded', active_state: 'failed', sub_state: 'failed', unit_file_state: 'enabled', description: 'Nightly Offsite Backup Sync' },
+        { name: 'caddy.service', load_state: 'loaded', active_state: 'active', sub_state: 'running', unit_file_state: 'enabled', description: 'Caddy Reverse Proxy' },
+        { name: 'incus.service', load_state: 'loaded', active_state: 'active', sub_state: 'running', unit_file_state: 'enabled', description: 'Incus Container and VM Hypervisor' },
+        { name: 'postgresql.service', load_state: 'loaded', active_state: 'active', sub_state: 'exited', unit_file_state: 'enabled', description: 'PostgreSQL RDBMS' },
+        { name: 'ssh.service', load_state: 'loaded', active_state: 'active', sub_state: 'running', unit_file_state: 'enabled', description: 'OpenBSD Secure Shell server' },
+        { name: 'vektord.service', load_state: 'loaded', active_state: 'active', sub_state: 'running', unit_file_state: 'enabled', description: 'Vektor Linux Host Monitoring Daemon' },
+        { name: 'apt-daily.service', load_state: 'loaded', active_state: 'inactive', sub_state: 'dead', unit_file_state: 'static', description: 'Daily apt download activities' },
+      ]
+      if (state === 'active') return all.filter(s => s.active_state === 'active')
+      if (state === 'failed') return all.filter(s => s.active_state === 'failed')
+      if (state === 'inactive') return all.filter(s => s.active_state !== 'active' && s.active_state !== 'failed')
+      return all
+    },
+    async serviceLogs(unit, _lines, priority, signal): Promise<LogEntry[]> {
+      checkAbort(signal)
+      requireSession()
+      const now = Date.now()
+      const entries: LogEntry[] = [
+        { timestamp_ms: now - 180_000, priority: 'info', unit, message: `Started ${unit}.` },
+        { timestamp_ms: now - 120_000, priority: 'info', unit, message: 'Health check completed in 4ms (status=ok).' },
+        { timestamp_ms: now - 60_000, priority: 'warning', unit, message: 'Transient upstream latency spike observed (182ms).' },
+        { timestamp_ms: now - 15_000, priority: unit.includes('backup') ? 'err' : 'info', unit, message: unit.includes('backup') ? 'Remote target unreachable: connection timed out after 10s.' : 'Periodic checkpoint completed cleanly.' },
+      ]
+      if (priority === 'err') return entries.filter(e => e.priority === 'err')
+      if (priority === 'warning') return entries.filter(e => e.priority === 'err' || e.priority === 'warning')
+      return entries
+    },
+    async serviceAction(_session, unit, action, signal) {
+      checkAbort(signal)
+      requireSession()
+      getDemoAudit().unshift({
+        id: nextAlertId++, actor: 'admin', action: `service.${action}`, target: unit, status: 'ok',
+        detail: `systemctl ${action} ${unit} completed (demo)`, created_at_ms: Date.now(),
+      })
+      return { ok: true, message: `systemctl ${action} ${unit} completed` }
+    },
+    async processSignal(_session, pid, sig, signal) {
+      checkAbort(signal)
+      requireSession()
+      getDemoAudit().unshift({
+        id: nextAlertId++, actor: 'admin', action: 'process.signal', target: `pid:${pid}`, status: 'ok',
+        detail: `signal ${sig} sent to pid ${pid} (demo)`, created_at_ms: Date.now(),
+      })
+      return { ok: true, message: `signal ${sig} sent to pid ${pid}` }
+    },
+    async hostPower(_session, action, signal) {
+      checkAbort(signal)
+      requireSession()
+      getDemoAudit().unshift({
+        id: nextAlertId++, actor: 'admin', action: `host.${action}`, target: 'host:local', status: 'ok',
+        detail: `host ${action} initiated (demo)`, created_at_ms: Date.now(),
+      })
+      return { ok: true, message: `host ${action} initiated` }
+    },
+    async auditLog(signal, limit = 50) {
+      checkAbort(signal)
+      requireSession()
+      return getDemoAudit().slice(0, limit)
     },
   }
 }

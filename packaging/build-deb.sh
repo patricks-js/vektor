@@ -12,11 +12,14 @@ if [[ "${SKIP_WEB_BUILD:-0}" != "1" ]]; then
   bun run --cwd "${ROOT_DIR}/web" build
 fi
 
-echo "Building static vektord (${VERSION} / ${ARCH})..."
+echo "Building static vektord and vektor-ctl (${VERSION} / ${ARCH})..."
 (cd "${ROOT_DIR}" && CGO_ENABLED=0 GOOS=linux GOARCH="${ARCH}" go build -tags webui -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o "${STAGE}/usr/bin/vektord" ./cmd/vektord)
+(cd "${ROOT_DIR}" && CGO_ENABLED=0 GOOS=linux GOARCH="${ARCH}" go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o "${STAGE}/usr/bin/vektor-ctl" ./cmd/vektor-ctl)
 
 install -d "${STAGE}/DEBIAN" "${STAGE}/lib/systemd/system" "${STAGE}/etc/vektor"
 install -m 0644 "${ROOT_DIR}/packaging/systemd/vektord.service" "${STAGE}/lib/systemd/system/vektord.service"
+install -m 0644 "${ROOT_DIR}/packaging/systemd/vektor-ctl.socket" "${STAGE}/lib/systemd/system/vektor-ctl.socket"
+install -m 0644 "${ROOT_DIR}/packaging/systemd/vektor-ctl.service" "${STAGE}/lib/systemd/system/vektor-ctl.service"
 install -m 0640 "${ROOT_DIR}/packaging/systemd/vektord.env" "${STAGE}/etc/vektor/vektord.env"
 
 cat > "${STAGE}/DEBIAN/conffiles" <<'EOF'
@@ -42,12 +45,16 @@ set -e
 if ! id -u vektor >/dev/null 2>&1; then
   useradd --system --home-dir /var/lib/vektor --shell /usr/sbin/nologin --user-group vektor
 fi
+if getent group systemd-journal >/dev/null 2>&1; then
+  usermod -aG systemd-journal vektor || true
+fi
 install -d -m 0750 -o vektor -g vektor /var/lib/vektor
 chown root:vektor /etc/vektor /etc/vektor/vektord.env
 chmod 0750 /etc/vektor
 chmod 0640 /etc/vektor/vektord.env
 if command -v systemctl >/dev/null 2>&1; then
   systemctl daemon-reload || true
+  systemctl enable --now vektor-ctl.socket || true
   systemctl try-restart vektord || true
 fi
 echo "Vektor installed. Run: sudo -u vektor /usr/bin/vektord bootstrap-admin --data-dir /var/lib/vektor"
@@ -59,8 +66,8 @@ cat > "${STAGE}/DEBIAN/prerm" <<'EOF'
 #!/bin/sh
 set -e
 if [ "$1" = "remove" ] && command -v systemctl >/dev/null 2>&1; then
-  systemctl stop vektord || true
-  systemctl disable vektord || true
+  systemctl stop vektord vektor-ctl.socket vektor-ctl.service || true
+  systemctl disable vektord vektor-ctl.socket || true
 fi
 EOF
 chmod 0755 "${STAGE}/DEBIAN/prerm"

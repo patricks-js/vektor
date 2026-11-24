@@ -1,0 +1,15 @@
+[Unit]
+Description=Vektor Privileged Control Helper
+Documentation=https://github.com/patricks-js/vektor
+Requires=vektor-ctl.socket
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/vektor-ctl --allow-user vektor --idle-timeout 30s
+ProtectHome=true
+PrivateTmp=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
