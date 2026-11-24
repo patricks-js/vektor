@@ -1,5 +1,5 @@
 import * as stylex from '@stylexjs/stylex'
-import { CircleAlert, LayoutGrid, Menu, Moon, Server, Settings, Sun, UserRound, X } from 'lucide-react'
+import { Boxes, CircleAlert, LayoutGrid, Menu, Moon, Server, Settings, Sun, UserRound, X } from 'lucide-react'
 import { useEffect, useId, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { Badge, Brand, Button, StatusDot, layout } from '../components/ui/ui'
@@ -81,6 +81,7 @@ const s = stylex.create({
 const navItems = [
   { to: '/overview', title: 'Overview', icon: LayoutGrid },
   { to: '/host/cpu', title: 'Host', icon: Server },
+  { to: '/instances', title: 'Instances', icon: Boxes },
   { to: '/settings', title: 'Settings', icon: Settings },
 ]
 
@@ -91,15 +92,19 @@ function Navigation({ mobile = false, close }: { mobile?: boolean; close?: () =>
   const hasUpdate = Boolean(update.data?.update_available)
   return (
     <nav aria-label="Navegação principal" {...stylex.props(mobile ? s.navStack : s.desktopNav)}>
-      {navItems.map(({ to, title, icon: Icon }) => (
-        <NavLink key={to} to={link(to)} aria-label={title} title={title} onClick={close}
-          aria-current={title === 'Host' && pathname.startsWith('/host/') ? 'location' : undefined}
-          className={({ isActive }) => stylex.props(s.navItem, (isActive || (title === 'Host' && pathname.startsWith('/host/'))) && s.active).className ?? ''}>
-          <Icon size={15} aria-hidden {...stylex.props(s.icon)} />
-          <span>{title}</span>
-          {title === 'Settings' && hasUpdate && <StatusDot tone="info" />}
-        </NavLink>
-      ))}
+      {navItems.map(({ to, title, icon: Icon }) => {
+        const prefixActive = (title === 'Host' && pathname.startsWith('/host/'))
+          || (title === 'Instances' && pathname.startsWith('/instances/'))
+        return (
+          <NavLink key={to} to={link(to)} aria-label={title} title={title} onClick={close}
+            aria-current={prefixActive ? 'location' : undefined}
+            className={({ isActive }) => stylex.props(s.navItem, (isActive || prefixActive) && s.active).className ?? ''}>
+            <Icon size={15} aria-hidden {...stylex.props(s.icon)} />
+            <span>{title}</span>
+            {title === 'Settings' && hasUpdate && <StatusDot tone="info" />}
+          </NavLink>
+        )
+      })}
     </nav>
   )
 }

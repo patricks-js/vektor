@@ -6,6 +6,8 @@ import { ErrorState, Loading } from '../components/ui/ui'
 import { AuthFrame, Login } from '../features/auth/Login'
 import { SessionContext } from '../features/auth/session'
 import { HostPage } from '../features/host/HostPage'
+import { InstanceDetail } from '../features/instances/InstanceDetail'
+import { InstancesPage } from '../features/instances/InstancesPage'
 import { usePeriodLink } from '../features/metrics/range'
 import { Overview } from '../features/overview/Overview'
 import { SettingsPage } from '../features/settings/SettingsPage'
@@ -88,6 +90,8 @@ function ActiveRoutes({ session, expire, logout }: {
                 <Route path="/overview" element={<Overview />} />
                 <Route path="/host" element={<HostPage />} />
                 <Route path="/host/:subsystem" element={<HostPage />} />
+                <Route path="/instances" element={<InstancesPage />} />
+                <Route path="/instances/:name" element={<InstanceDetail />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="*" element={<OverviewRedirect />} />
               </Route>

@@ -112,6 +112,96 @@ export type AuditEntry = {
 
 export type ServiceAction = 'start' | 'stop' | 'restart' | 'reload' | 'enable' | 'disable'
 
+export type IncusStatus = {
+  available: boolean
+  reason?: string
+  server_version?: string
+  kernel_version?: string
+  drivers?: string[]
+  storage_drivers?: string[]
+  instance_count: number
+  running_count: number
+  vm_count: number
+  container_count: number
+}
+
+export type IncusInstance = {
+  name: string
+  type: 'container' | 'virtual-machine'
+  status: string
+  description?: string
+  architecture?: string
+  ephemeral: boolean
+  stateful: boolean
+  profiles: string[]
+  created_at?: string
+  last_used_at?: string
+  cpu_limit?: string
+  memory_limit?: string
+  cpu_usage_ns: number
+  memory_usage_bytes: number
+  memory_peak_bytes: number
+  disk_usage_bytes: number
+  processes: number
+  pid: number
+  ipv4: string[]
+  ipv6: string[]
+  snapshots_count: number
+}
+
+export type IncusSnapshot = {
+  name: string
+  created_at?: string
+  stateful: boolean
+  size_bytes: number
+}
+
+export type IncusStoragePool = {
+  name: string
+  driver: string
+  status: string
+  description?: string
+  used_bytes: number
+  total_bytes: number
+  used_by_count: number
+}
+
+export type IncusNetwork = {
+  name: string
+  type: string
+  managed: boolean
+  status?: string
+  description?: string
+  ipv4_address?: string
+  ipv6_address?: string
+  used_by_count: number
+}
+
+export type IncusProfile = {
+  name: string
+  description?: string
+  used_by_count: number
+}
+
+export type IncusResources = {
+  storage_pools: IncusStoragePool[]
+  networks: IncusNetwork[]
+  profiles: IncusProfile[]
+}
+
+export type IncusCreateInstanceInput = {
+  name: string
+  type: 'container' | 'virtual-machine'
+  image: string
+  description?: string
+  cpu_limit?: string
+  memory_limit?: string
+  profiles?: string[]
+  start: boolean
+}
+
+export type IncusStateAction = 'start' | 'stop' | 'force_stop' | 'restart' | 'freeze' | 'unfreeze'
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -158,7 +248,21 @@ function requestSlots() {
 export function createApi(onUnauthorized?: () => void) {
   const schedule = requestSlots()
 
-  async function send<T>(path: ApiPaths | `/api/v1/resources/${string}` | `/api/v1/alerts/${string}` | '/api/v1/update' | '/api/v1/processes' | `/api/v1/processes/${number}/signal` | '/api/v1/services' | `/api/v1/services/${string}/logs` | `/api/v1/services/${string}/action` | '/api/v1/host/power' | '/api/v1/audit', init?: RequestInit, params?: Record<string, string>) {
+  type RequestPath =
+    | ApiPaths
+    | `/api/v1/resources/${string}`
+    | `/api/v1/alerts/${string}`
+    | '/api/v1/update'
+    | '/api/v1/processes'
+    | `/api/v1/processes/${number}/signal`
+    | '/api/v1/services'
+    | `/api/v1/services/${string}/logs`
+    | `/api/v1/services/${string}/action`
+    | '/api/v1/host/power'
+    | '/api/v1/audit'
+    | `/api/v1/incus/${string}`
+
+  async function send<T>(path: RequestPath, init?: RequestInit, params?: Record<string, string>) {
     const url = params ? `${path}?${new URLSearchParams(params)}` : path
     let response: Response
     try {
@@ -179,7 +283,7 @@ export function createApi(onUnauthorized?: () => void) {
     return response.json() as Promise<T>
   }
 
-  function request<T>(path: ApiPaths | `/api/v1/resources/${string}` | `/api/v1/alerts/${string}` | '/api/v1/update' | '/api/v1/processes' | `/api/v1/processes/${number}/signal` | '/api/v1/services' | `/api/v1/services/${string}/logs` | `/api/v1/services/${string}/action` | '/api/v1/host/power' | '/api/v1/audit', init?: RequestInit, params?: Record<string, string>) {
+  function request<T>(path: RequestPath, init?: RequestInit, params?: Record<string, string>) {
     return schedule(init?.signal, () => send<T>(path, init, params))
   }
 
@@ -276,6 +380,41 @@ export function createApi(onUnauthorized?: () => void) {
       }),
     auditLog: async (signal: AbortSignal, limit = 50) =>
       (await request<{ entries: AuditEntry[] }>('/api/v1/audit', { signal }, { limit: String(limit) })).entries,
+    incusStatus: (signal: AbortSignal) => request<IncusStatus>('/api/v1/incus/status', { signal }),
+    incusInstances: async (signal: AbortSignal) =>
+      (await request<{ instances: IncusInstance[] }>('/api/v1/incus/instances', { signal })).instances,
+    incusInstance: (name: string, signal: AbortSignal) =>
+      request<IncusInstance>(`/api/v1/incus/instances/${encodeURIComponent(name)}`, { signal }),
+    incusCreateInstance: (session: Session, input: IncusCreateInstanceInput, signal?: AbortSignal) =>
+      request<{ ok: boolean; message?: string }>('/api/v1/incus/instances', {
+        method: 'POST', signal, body: JSON.stringify(input),
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': session.csrf_token },
+      }),
+    incusDeleteInstance: (session: Session, name: string, signal?: AbortSignal) =>
+      request<{ ok: boolean; message?: string }>(`/api/v1/incus/instances/${encodeURIComponent(name)}`, {
+        method: 'DELETE', signal, headers: { 'X-CSRF-Token': session.csrf_token },
+      }),
+    incusInstanceState: (session: Session, name: string, action: IncusStateAction, signal?: AbortSignal) =>
+      request<{ ok: boolean; message?: string }>(`/api/v1/incus/instances/${encodeURIComponent(name)}/state`, {
+        method: 'POST', signal, body: JSON.stringify({ action }),
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': session.csrf_token },
+      }),
+    incusSnapshots: async (name: string, signal: AbortSignal) =>
+      (await request<{ snapshots: IncusSnapshot[] }>(`/api/v1/incus/instances/${encodeURIComponent(name)}/snapshots`, { signal })).snapshots,
+    incusCreateSnapshot: (session: Session, name: string, snapName: string, stateful = false, signal?: AbortSignal) =>
+      request<{ ok: boolean; message?: string }>(`/api/v1/incus/instances/${encodeURIComponent(name)}/snapshots`, {
+        method: 'POST', signal, body: JSON.stringify({ name: snapName, stateful }),
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': session.csrf_token },
+      }),
+    incusRestoreSnapshot: (session: Session, name: string, snapName: string, signal?: AbortSignal) =>
+      request<{ ok: boolean; message?: string }>(`/api/v1/incus/instances/${encodeURIComponent(name)}/snapshots/${encodeURIComponent(snapName)}/restore`, {
+        method: 'POST', signal, headers: { 'X-CSRF-Token': session.csrf_token },
+      }),
+    incusDeleteSnapshot: (session: Session, name: string, snapName: string, signal?: AbortSignal) =>
+      request<{ ok: boolean; message?: string }>(`/api/v1/incus/instances/${encodeURIComponent(name)}/snapshots/${encodeURIComponent(snapName)}`, {
+        method: 'DELETE', signal, headers: { 'X-CSRF-Token': session.csrf_token },
+      }),
+    incusResources: (signal: AbortSignal) => request<IncusResources>('/api/v1/incus/resources', { signal }),
   }
 }
 

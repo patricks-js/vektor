@@ -35,8 +35,13 @@ func handler(dist fs.FS) http.Handler {
 			return
 		}
 
-		switch r.URL.Path {
-		case "/", "/login", "/overview", "/host", "/host/cpu", "/host/memory", "/host/storage", "/host/network", "/host/sensors", "/host/services", "/host/processes", "/settings":
+		isInstanceDetail := strings.HasPrefix(r.URL.Path, "/instances/") && strings.Count(r.URL.Path, "/") == 2
+		switch {
+		case isInstanceDetail, r.URL.Path == "/", r.URL.Path == "/login", r.URL.Path == "/overview",
+			r.URL.Path == "/host", r.URL.Path == "/host/cpu", r.URL.Path == "/host/memory",
+			r.URL.Path == "/host/storage", r.URL.Path == "/host/network", r.URL.Path == "/host/sensors",
+			r.URL.Path == "/host/services", r.URL.Path == "/host/processes",
+			r.URL.Path == "/instances", r.URL.Path == "/settings":
 			// FileServer serves index.html for the root without redirecting the browser.
 			copy := r.Clone(r.Context())
 			copy.URL.Path = "/"

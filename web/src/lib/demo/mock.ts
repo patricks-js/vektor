@@ -1,5 +1,5 @@
 import { ApiError } from '../api/client'
-import type { AlertChannel, AlertEvent, AlertRule, Api, AuditEntry, Health, Host, LogEntry, ProcessInfo, Resource, ResourceKind, Series, SeriesPoint, ServiceInfo, Session, Step } from '../api/client'
+import type { AlertChannel, AlertEvent, AlertRule, Api, AuditEntry, Health, Host, IncusInstance, IncusResources, IncusSnapshot, LogEntry, ProcessInfo, Resource, ResourceKind, Series, SeriesPoint, ServiceInfo, Session, Step } from '../api/client'
 import type { LiveStore, TransportState } from '../realtime/store'
 import type { LivePoint } from '../realtime/stream'
 import { metric } from '../../features/metrics/catalog'
@@ -17,7 +17,73 @@ let demoRules: AlertRule[] | undefined
 let demoChannels: AlertChannel[] | undefined
 let demoEvents: AlertEvent[] | undefined
 let demoAudit: AuditEntry[] | undefined
+let demoIncusInstances: IncusInstance[] | undefined
+let demoIncusSnapshots: Record<string, IncusSnapshot[]> | undefined
 let nextAlertId = 10
+
+function getDemoIncus() {
+  if (!demoIncusInstances) {
+    const now = Date.now()
+    demoIncusInstances = [
+      {
+        name: 'caddy-edge', type: 'container', status: 'Running', description: 'Reverse proxy & TLS termination',
+        architecture: 'x86_64', ephemeral: false, stateful: false, profiles: ['default'],
+        created_at: new Date(now - 28 * 86400_000).toISOString(), last_used_at: new Date(now - 3600_000).toISOString(),
+        cpu_limit: '2', memory_limit: '1GiB', cpu_usage_ns: 94_000_000_000,
+        memory_usage_bytes: 184 * MiB, memory_peak_bytes: 290 * MiB, disk_usage_bytes: 1.4 * GiB,
+        processes: 14, pid: 3112, ipv4: ['10.24.0.10'], ipv6: ['fd42:1::10'], snapshots_count: 2,
+      },
+      {
+        name: 'postgres-prod', type: 'container', status: 'Running', description: 'Primary PostgreSQL 16 instance',
+        architecture: 'x86_64', ephemeral: false, stateful: false, profiles: ['default'],
+        created_at: new Date(now - 45 * 86400_000).toISOString(), last_used_at: new Date(now - 1800_000).toISOString(),
+        cpu_limit: '4', memory_limit: '8GiB', cpu_usage_ns: 412_000_000_000,
+        memory_usage_bytes: 3.6 * GiB, memory_peak_bytes: 5.1 * GiB, disk_usage_bytes: 18.2 * GiB,
+        processes: 29, pid: 3490, ipv4: ['10.24.0.20'], ipv6: [], snapshots_count: 1,
+      },
+      {
+        name: 'ubuntu-lab', type: 'virtual-machine', status: 'Running', description: 'KVM dev & CI runner VM',
+        architecture: 'x86_64', ephemeral: false, stateful: false, profiles: ['default'],
+        created_at: new Date(now - 14 * 86400_000).toISOString(), last_used_at: new Date(now - 600_000).toISOString(),
+        cpu_limit: '4', memory_limit: '4GiB', cpu_usage_ns: 280_000_000_000,
+        memory_usage_bytes: 2.1 * GiB, memory_peak_bytes: 3.4 * GiB, disk_usage_bytes: 24.5 * GiB,
+        processes: 112, pid: 4120, ipv4: ['10.24.0.35'], ipv6: [], snapshots_count: 1,
+      },
+      {
+        name: 'debian-staging', type: 'virtual-machine', status: 'Stopped', description: 'Pre-production validation VM',
+        architecture: 'x86_64', ephemeral: false, stateful: false, profiles: ['default'],
+        created_at: new Date(now - 9 * 86400_000).toISOString(), last_used_at: new Date(now - 2 * 86400_000).toISOString(),
+        cpu_limit: '2', memory_limit: '2GiB', cpu_usage_ns: 0,
+        memory_usage_bytes: 0, memory_peak_bytes: 0, disk_usage_bytes: 12.1 * GiB,
+        processes: 0, pid: 0, ipv4: [], ipv6: [], snapshots_count: 0,
+      },
+      {
+        name: 'redis-cache', type: 'container', status: 'Frozen', description: 'In-memory session & queue cache',
+        architecture: 'x86_64', ephemeral: false, stateful: false, profiles: ['default'],
+        created_at: new Date(now - 6 * 86400_000).toISOString(), last_used_at: new Date(now - 12 * 3600_000).toISOString(),
+        cpu_limit: '1', memory_limit: '512MiB', cpu_usage_ns: 12_000_000_000,
+        memory_usage_bytes: 96 * MiB, memory_peak_bytes: 140 * MiB, disk_usage_bytes: 310 * MiB,
+        processes: 6, pid: 5012, ipv4: ['10.24.0.41'], ipv6: [], snapshots_count: 0,
+      },
+    ]
+  }
+  if (!demoIncusSnapshots) {
+    const now = Date.now()
+    demoIncusSnapshots = {
+      'caddy-edge': [
+        { name: 'pre-v2.9', created_at: new Date(now - 5 * 86400_000).toISOString(), stateful: false, size_bytes: 42 * MiB },
+        { name: 'clean-base', created_at: new Date(now - 20 * 86400_000).toISOString(), stateful: false, size_bytes: 18 * MiB },
+      ],
+      'postgres-prod': [
+        { name: 'nightly-01', created_at: new Date(now - 86400_000).toISOString(), stateful: false, size_bytes: 640 * MiB },
+      ],
+      'ubuntu-lab': [
+        { name: 'fresh-install', created_at: new Date(now - 10 * 86400_000).toISOString(), stateful: false, size_bytes: 1.8 * GiB },
+      ],
+    }
+  }
+  return { instances: demoIncusInstances, snapshots: demoIncusSnapshots }
+}
 
 function getDemoAudit() {
   if (!demoAudit) {
@@ -537,6 +603,160 @@ export function createDemoApi(onUnauthorized?: () => void): Api {
       checkAbort(signal)
       requireSession()
       return getDemoAudit().slice(0, limit)
+    },
+    async incusStatus(signal) {
+      checkAbort(signal)
+      requireSession()
+      const { instances } = getDemoIncus()
+      return {
+        available: true,
+        server_version: '6.8',
+        kernel_version: '6.8.0-52-generic',
+        drivers: ['lxc', 'qemu'],
+        storage_drivers: ['zfs', 'dir'],
+        instance_count: instances.length,
+        running_count: instances.filter(i => i.status === 'Running').length,
+        vm_count: instances.filter(i => i.type === 'virtual-machine').length,
+        container_count: instances.filter(i => i.type === 'container').length,
+      }
+    },
+    async incusInstances(signal) {
+      checkAbort(signal)
+      requireSession()
+      const { instances, snapshots } = getDemoIncus()
+      return instances.map(i => ({ ...i, snapshots_count: (snapshots[i.name] ?? []).length }))
+    },
+    async incusInstance(name, signal) {
+      checkAbort(signal)
+      requireSession()
+      const { instances, snapshots } = getDemoIncus()
+      const found = instances.find(i => i.name === name)
+      if (!found) throw new ApiError(404, 'not_found')
+      return { ...found, snapshots_count: (snapshots[found.name] ?? []).length }
+    },
+    async incusCreateInstance(_session, input, signal) {
+      checkAbort(signal)
+      requireSession()
+      const { instances } = getDemoIncus()
+      if (instances.some(i => i.name === input.name)) throw new ApiError(422, 'action_failed')
+      const nowIso = new Date().toISOString()
+      instances.push({
+        name: input.name,
+        type: input.type,
+        status: input.start ? 'Running' : 'Stopped',
+        description: input.description ?? '',
+        architecture: 'x86_64',
+        ephemeral: false,
+        stateful: false,
+        profiles: input.profiles?.length ? input.profiles : ['default'],
+        created_at: nowIso,
+        last_used_at: input.start ? nowIso : undefined,
+        cpu_limit: input.cpu_limit,
+        memory_limit: input.memory_limit,
+        cpu_usage_ns: 0,
+        memory_usage_bytes: input.start ? 128 * MiB : 0,
+        memory_peak_bytes: input.start ? 160 * MiB : 0,
+        disk_usage_bytes: 512 * MiB,
+        processes: input.start ? 12 : 0,
+        pid: input.start ? 6200 : 0,
+        ipv4: input.start ? [`10.24.0.${60 + instances.length}`] : [],
+        ipv6: [],
+        snapshots_count: 0,
+      })
+      getDemoAudit().unshift({
+        id: nextAlertId++, actor: 'admin', action: 'incus.instance.create', target: `incus:${input.name}`, status: 'ok',
+        detail: `instance ${input.name} created (demo)`, created_at_ms: Date.now(),
+      })
+      return { ok: true, message: `instance ${input.name} created` }
+    },
+    async incusDeleteInstance(_session, name, signal) {
+      checkAbort(signal)
+      requireSession()
+      const state = getDemoIncus()
+      demoIncusInstances = state.instances.filter(i => i.name !== name)
+      delete state.snapshots[name]
+      getDemoAudit().unshift({
+        id: nextAlertId++, actor: 'admin', action: 'incus.instance.delete', target: `incus:${name}`, status: 'ok',
+        detail: `instance ${name} deleted (demo)`, created_at_ms: Date.now(),
+      })
+      return { ok: true, message: `instance ${name} deleted` }
+    },
+    async incusInstanceState(_session, name, action, signal) {
+      checkAbort(signal)
+      requireSession()
+      const { instances } = getDemoIncus()
+      const inst = instances.find(i => i.name === name)
+      if (!inst) throw new ApiError(404, 'not_found')
+      if (action === 'start' || action === 'restart' || action === 'unfreeze') {
+        inst.status = 'Running'
+        if (!inst.ipv4.length) inst.ipv4 = ['10.24.0.88']
+        if (!inst.memory_usage_bytes) inst.memory_usage_bytes = 256 * MiB
+        if (!inst.processes) inst.processes = 18
+      } else if (action === 'stop' || action === 'force_stop') {
+        inst.status = 'Stopped'
+        inst.ipv4 = []
+        inst.memory_usage_bytes = 0
+        inst.processes = 0
+      } else if (action === 'freeze') {
+        inst.status = 'Frozen'
+      }
+      getDemoAudit().unshift({
+        id: nextAlertId++, actor: 'admin', action: `incus.instance.${action}`, target: `incus:${name}`, status: 'ok',
+        detail: `incus ${action} ${name} completed (demo)`, created_at_ms: Date.now(),
+      })
+      return { ok: true, message: `incus ${action} ${name} completed` }
+    },
+    async incusSnapshots(name, signal) {
+      checkAbort(signal)
+      requireSession()
+      return [...(getDemoIncus().snapshots[name] ?? [])]
+    },
+    async incusCreateSnapshot(_session, name, snapName, stateful = false, signal) {
+      checkAbort(signal)
+      requireSession()
+      const { snapshots } = getDemoIncus()
+      snapshots[name] = snapshots[name] ?? []
+      snapshots[name].unshift({ name: snapName, created_at: new Date().toISOString(), stateful, size_bytes: 64 * MiB })
+      getDemoAudit().unshift({
+        id: nextAlertId++, actor: 'admin', action: 'incus.snapshot.create', target: `incus:${name}/${snapName}`, status: 'ok',
+        detail: `snapshot ${name}/${snapName} created (demo)`, created_at_ms: Date.now(),
+      })
+      return { ok: true, message: `snapshot ${name}/${snapName} created` }
+    },
+    async incusRestoreSnapshot(_session, name, snapName, signal) {
+      checkAbort(signal)
+      requireSession()
+      getDemoAudit().unshift({
+        id: nextAlertId++, actor: 'admin', action: 'incus.snapshot.restore', target: `incus:${name}/${snapName}`, status: 'ok',
+        detail: `snapshot ${name}/${snapName} restored (demo)`, created_at_ms: Date.now(),
+      })
+      return { ok: true, message: `snapshot ${name}/${snapName} restored` }
+    },
+    async incusDeleteSnapshot(_session, name, snapName, signal) {
+      checkAbort(signal)
+      requireSession()
+      const { snapshots } = getDemoIncus()
+      snapshots[name] = (snapshots[name] ?? []).filter(s => s.name !== snapName)
+      getDemoAudit().unshift({
+        id: nextAlertId++, actor: 'admin', action: 'incus.snapshot.delete', target: `incus:${name}/${snapName}`, status: 'ok',
+        detail: `snapshot ${name}/${snapName} deleted (demo)`, created_at_ms: Date.now(),
+      })
+      return { ok: true, message: `snapshot ${name}/${snapName} deleted` }
+    },
+    async incusResources(signal): Promise<IncusResources> {
+      checkAbort(signal)
+      requireSession()
+      return {
+        storage_pools: [
+          { name: 'default', driver: 'zfs', status: 'Created', description: 'Primary NVMe ZFS pool', used_bytes: 56 * GiB, total_bytes: 500 * GiB, used_by_count: 5 },
+        ],
+        networks: [
+          { name: 'incusbr0', type: 'bridge', managed: true, status: 'Created', ipv4_address: '10.24.0.1/24', ipv6_address: 'fd42:1::1/64', used_by_count: 5 },
+        ],
+        profiles: [
+          { name: 'default', description: 'Default Incus profile', used_by_count: 5 },
+        ],
+      }
     },
   }
 }

@@ -101,6 +101,23 @@ func New(cfg config.HTTPConfig, queries *history.QueryService, sessions *auth.St
 	a.route(http.MethodPost, apiPath+"/services/{name}/action", true, a.serviceAction)
 	a.route(http.MethodPost, apiPath+"/host/power", true, a.hostPower)
 	a.route(http.MethodGet, apiPath+"/audit", true, a.listAudit)
+	a.route(http.MethodGet, apiPath+"/incus/status", true, a.incusStatus)
+	a.route(http.MethodGet, apiPath+"/incus/resources", true, a.listIncusResources)
+	a.routeMethods(apiPath+"/incus/instances", true, map[string]http.HandlerFunc{
+		http.MethodGet:  a.listIncusInstances,
+		http.MethodPost: a.createIncusInstance,
+	})
+	a.routeMethods(apiPath+"/incus/instances/{name}", true, map[string]http.HandlerFunc{
+		http.MethodGet:    a.getIncusInstance,
+		http.MethodDelete: a.deleteIncusInstance,
+	})
+	a.route(http.MethodPost, apiPath+"/incus/instances/{name}/state", true, a.incusInstanceState)
+	a.routeMethods(apiPath+"/incus/instances/{name}/snapshots", true, map[string]http.HandlerFunc{
+		http.MethodGet:  a.listIncusSnapshots,
+		http.MethodPost: a.createIncusSnapshot,
+	})
+	a.route(http.MethodPost, apiPath+"/incus/instances/{name}/snapshots/{snap}/restore", true, a.restoreIncusSnapshot)
+	a.route(http.MethodDelete, apiPath+"/incus/instances/{name}/snapshots/{snap}", true, a.deleteIncusSnapshot)
 	a.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if a.ui != nil && r.URL.Path != "/api" && !strings.HasPrefix(r.URL.Path, "/api/") {
 			a.ui.ServeHTTP(w, r)
@@ -252,7 +269,16 @@ func (a *API) routeMethods(routePath string, private bool, handlers map[string]h
 			return
 		}
 
-		ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
+		timeout := requestTimeout
+		if strings.HasPrefix(routePath, apiPath+"/incus/") {
+			if isMutation {
+				timeout = 130 * time.Second
+			} else {
+				timeout = 15 * time.Second
+			}
+			_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(timeout + 5*time.Second))
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), timeout)
 		defer cancel()
 		id := identity{}
 		if private {

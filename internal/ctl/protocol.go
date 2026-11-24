@@ -8,12 +8,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"vektor/internal/hostmgmt"
+	"vektor/internal/incus"
 )
 
 const DefaultSocketPath = "/run/vektor/ctl.sock"
@@ -24,15 +27,33 @@ var (
 )
 
 type Request struct {
-	Action string `json:"action"`
-	Target string `json:"target,omitempty"`
-	Signal string `json:"signal,omitempty"`
+	Action  string          `json:"action"`
+	Target  string          `json:"target,omitempty"`
+	Signal  string          `json:"signal,omitempty"`
+	Payload json.RawMessage `json:"payload,omitempty"`
 }
 
 type Response struct {
-	OK      bool   `json:"ok"`
-	Message string `json:"message,omitempty"`
-	Error   string `json:"error,omitempty"`
+	OK      bool            `json:"ok"`
+	Message string          `json:"message,omitempty"`
+	Error   string          `json:"error,omitempty"`
+	Data    json.RawMessage `json:"data,omitempty"`
+}
+
+func actionTimeout(action string) time.Duration {
+	switch action {
+	case "incus.instance.create":
+		return 125 * time.Second
+	case "incus.instance.start", "incus.instance.stop", "incus.instance.force_stop",
+		"incus.instance.restart", "incus.instance.freeze", "incus.instance.unfreeze",
+		"incus.instance.delete", "incus.snapshot.create", "incus.snapshot.restore", "incus.snapshot.delete":
+		return 45 * time.Second
+	default:
+		if strings.HasPrefix(action, "incus.") {
+			return 15 * time.Second
+		}
+		return 10 * time.Second
+	}
 }
 
 func ValidateRequest(req Request) error {
@@ -56,6 +77,25 @@ func ValidateRequest(req Request) error {
 		return nil
 	case "host.reboot", "host.poweroff":
 		return nil
+	case "incus.status", "incus.instances.list", "incus.resources.list":
+		return nil
+	case "incus.instance.get", "incus.instance.start", "incus.instance.stop", "incus.instance.force_stop",
+		"incus.instance.restart", "incus.instance.freeze", "incus.instance.unfreeze",
+		"incus.instance.delete", "incus.snapshots.list", "incus.snapshot.create":
+		if !incus.ValidInstanceName(req.Target) {
+			return ErrInvalidAction
+		}
+		return nil
+	case "incus.instance.create":
+		if len(req.Payload) == 0 {
+			return ErrInvalidAction
+		}
+		return nil
+	case "incus.snapshot.restore", "incus.snapshot.delete":
+		if !incus.ValidInstanceName(req.Target) || !incus.ValidSnapshotName(req.Signal) {
+			return ErrInvalidAction
+		}
+		return nil
 	default:
 		return ErrInvalidAction
 	}
@@ -77,8 +117,12 @@ func (c *Client) Do(ctx context.Context, req Request) (Response, error) {
 	if err := ValidateRequest(req); err != nil {
 		return Response{}, err
 	}
+	timeout := actionTimeout(req.Action)
+	if c.timeout > timeout {
+		timeout = c.timeout
+	}
 	var dialer net.Dialer
-	dialCtx, cancel := context.WithTimeout(ctx, c.timeout)
+	dialCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	conn, err := dialer.DialContext(dialCtx, "unix", c.socketPath)
@@ -101,7 +145,7 @@ func (c *Client) Do(ctx context.Context, req Request) (Response, error) {
 		return Response{}, err
 	}
 
-	line, err := bufio.NewReader(conn).ReadBytes('\n')
+	line, err := bufio.NewReader(io.LimitReader(conn, 8<<20)).ReadBytes('\n')
 	if err != nil {
 		return Response{}, err
 	}
