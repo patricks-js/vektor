@@ -24,3 +24,14 @@ export function useResources(kind: ResourceKind) {
   const api = useApi()
   return useQuery({ queryKey: ['resources', kind], queryFn: ({ signal }) => api.resources(kind, signal), staleTime: 45_000, refetchInterval: 60_000 })
 }
+
+export function useUpdateStatus() {
+  const api = useApi()
+  return useQuery({
+    queryKey: ['update'],
+    queryFn: ({ signal }) => api.update(signal),
+    staleTime: 30 * 60_000,
+    refetchOnWindowFocus: false,
+    retry: false,
+  })
+}

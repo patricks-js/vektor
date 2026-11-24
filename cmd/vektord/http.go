@@ -34,6 +34,7 @@ func runDaemon(parent context.Context, cfg config.HTTPConfig, logger *slog.Logge
 
 	server := httpapi.New(cfg, queries, sessions, hub).
 		WithAlerts(alertStore, alertNotifier).
+		WithVersion(version).
 		WithUI(web.Handler()).
 		Server(ctx)
 	served := make(chan error, 1)

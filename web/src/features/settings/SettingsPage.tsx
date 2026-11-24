@@ -1,10 +1,11 @@
 import * as stylex from '@stylexjs/stylex'
-import { Bell, FileText, LogOut, Send, SlidersHorizontal, UserRound } from 'lucide-react'
+import { ArrowUpRight, Bell, FileText, LogOut, Send, SlidersHorizontal, UserRound } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { isRange, isTheme, ranges, usePreferences } from '../../app/preferences'
+import { isRange, isTheme, isTimeZone, ranges, usePreferences } from '../../app/preferences'
 import { Facts } from '../../components/ui/dashboard'
-import { Button, ErrorState, Modal, SelectField, layout } from '../../components/ui/ui'
-import { dateTime } from '../metrics/format'
+import { Badge, Button, ErrorState, Modal, SelectField, StatusDot, layout } from '../../components/ui/ui'
+import { useUpdateStatus } from '../../lib/api/queries'
+import { dateTime, timeZoneLabel } from '../metrics/format'
 import { useSession } from '../auth/session'
 import fontLicenses from '../../styles/geist-license.txt?url'
 import { AlertsSection, NotificationsSection } from './AlertsSettings'
@@ -53,6 +54,14 @@ const s = stylex.create({
   check: { width: 16, height: 16, accentColor: 'var(--vk-accent)' },
   license: { color: 'var(--vk-text-primary)', textUnderlineOffset: 4, fontSize: 13 },
   feedback: { minHeight: '19px' },
+  updateBox: {
+    display: 'grid', gap: 8, padding: 14, borderRadius: 'var(--vk-radius-2)',
+    backgroundColor: 'var(--vk-surface-2)', borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--vk-border-strong)',
+  },
+  updateLink: {
+    display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 13, fontWeight: 500,
+    color: 'var(--vk-info)', textUnderlineOffset: 4, width: 'fit-content',
+  },
 })
 
 const sections = [
@@ -64,8 +73,9 @@ const sections = [
 ] as const
 
 export function SettingsPage() {
-  const { singleColumn, setSingleColumn, theme, setTheme, defaultRange, setDefaultRange } = usePreferences()
+  const { singleColumn, setSingleColumn, theme, setTheme, timezone, setTimezone, defaultRange, setDefaultRange } = usePreferences()
   const { session, logout } = useSession()
+  const update = useUpdateStatus()
   const [activeSection, setActiveSection] = useState<typeof sections[number]['id']>('geral')
   const [feedback, setFeedback] = useState('')
   const [dialog, setDialog] = useState(false)
@@ -131,6 +141,12 @@ export function SettingsPage() {
                   <option value="dark">Escuro</option>
                   <option value="light">Claro</option>
                 </SelectField>
+                <SelectField label="Fuso horário" value={timezone} onChange={event => {
+                  if (isTimeZone(event.currentTarget.value)) saved(setTimezone(event.currentTarget.value))
+                }}>
+                  <option value="utc">UTC</option>
+                  <option value="local">Horário local</option>
+                </SelectField>
               </div>
               <label {...stylex.props(s.checkbox)}>
                 <input type="checkbox" {...stylex.props(s.check)} checked={singleColumn} onChange={event => saved(setSingleColumn(event.currentTarget.checked))} />
@@ -169,9 +185,30 @@ export function SettingsPage() {
             <section id="sobre" aria-labelledby="settings-about" {...stylex.props(s.section, s.sectionLast)}>
               <div {...stylex.props(s.sectionHead)}>
                 <h2 id="settings-about" {...stylex.props(layout.sectionTitle)}>Sobre o Vektor</h2>
-                <p {...stylex.props(layout.small)}>Informações da interface web e contrato da API.</p>
+                <p {...stylex.props(layout.small)}>Informações da interface web, daemon e atualizações.</p>
               </div>
-              <Facts items={[['Interface', __APP_VERSION__], ['Contrato da API', 'v1'], ['Fuso dos gráficos', 'UTC']]} />
+              <Facts items={[
+                ['Versão', update.data?.current_version || __APP_VERSION__],
+                ['Contrato da API', 'v1'],
+                ['Fuso dos gráficos', timeZoneLabel(timezone)],
+                ['Status da versão', update.data?.update_available
+                  ? <Badge tone="info" icon={<StatusDot tone="info" />}>v{update.data.latest_version} disponível</Badge>
+                  : update.data?.latest_version
+                    ? <Badge tone="success" icon={<StatusDot tone="success" />}>Atualizado</Badge>
+                    : '—'],
+              ]} />
+              {update.data?.update_available && update.data.latest_version && (
+                <div {...stylex.props(s.updateBox)}>
+                  <p {...stylex.props(layout.small)}>
+                    Uma nova versão (<strong>v{update.data.latest_version}</strong>) está disponível no GitHub Releases.
+                  </p>
+                  {update.data.release_url && (
+                    <a href={update.data.release_url} target="_blank" rel="noreferrer" {...stylex.props(s.updateLink)}>
+                      Ver notas da versão v{update.data.latest_version} <ArrowUpRight size={14} aria-hidden />
+                    </a>
+                  )}
+                </div>
+              )}
               <p><a href={fontLicenses} {...stylex.props(s.license)}>Licença da tipografia</a></p>
             </section>
           </div>

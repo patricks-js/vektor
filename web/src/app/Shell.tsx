@@ -5,7 +5,7 @@ import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { Badge, Brand, Button, StatusDot, layout } from '../components/ui/ui'
 import { useSession } from '../features/auth/session'
 import { usePeriodLink } from '../features/metrics/range'
-import { useHost } from '../lib/api/queries'
+import { useHost, useUpdateStatus } from '../lib/api/queries'
 import { isDemoMode } from '../lib/demo/mock'
 import { usePartialSnapshot, useTransport } from '../lib/realtime/hooks'
 import { usePreferences } from './preferences'
@@ -87,6 +87,8 @@ const navItems = [
 function Navigation({ mobile = false, close }: { mobile?: boolean; close?: () => void }) {
   const link = usePeriodLink()
   const { pathname } = useLocation()
+  const update = useUpdateStatus()
+  const hasUpdate = Boolean(update.data?.update_available)
   return (
     <nav aria-label="Navegação principal" {...stylex.props(mobile ? s.navStack : s.desktopNav)}>
       {navItems.map(({ to, title, icon: Icon }) => (
@@ -95,6 +97,7 @@ function Navigation({ mobile = false, close }: { mobile?: boolean; close?: () =>
           className={({ isActive }) => stylex.props(s.navItem, (isActive || (title === 'Host' && pathname.startsWith('/host/'))) && s.active).className ?? ''}>
           <Icon size={15} aria-hidden {...stylex.props(s.icon)} />
           <span>{title}</span>
+          {title === 'Settings' && hasUpdate && <StatusDot tone="info" />}
         </NavLink>
       ))}
     </nav>

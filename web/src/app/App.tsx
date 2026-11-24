@@ -15,8 +15,9 @@ import { ApiContext } from '../lib/api/queries'
 import { createDemoApi, createDemoLiveStore, isDemoMode } from '../lib/demo/mock'
 import { LiveContext } from '../lib/realtime/hooks'
 import { createLiveStore } from '../lib/realtime/store'
-import { PreferencesContext, isRange, isTheme, readPreference, writePreference } from './preferences'
-import type { Theme, TimeRange } from './preferences'
+import { PreferencesContext, isRange, isTheme, isTimeZone, readPreference, writePreference } from './preferences'
+import type { Theme, TimeRange, TimeZone } from './preferences'
+import { setDisplayTimeZone } from '../features/metrics/format'
 import { returnPath } from './routes'
 import { Shell } from './Shell'
 
@@ -161,6 +162,12 @@ export function App() {
     const saved = readPreference('theme')
     return isTheme(saved) ? saved : 'dark'
   })
+  const [timezone, setTimezone] = useState<TimeZone>(() => {
+    const saved = readPreference('timezone')
+    const initial = isTimeZone(saved) ? saved : 'utc'
+    setDisplayTimeZone(initial)
+    return initial
+  })
   const [defaultRange, setDefaultRange] = useState<TimeRange>(() => {
     const saved = readPreference('range')
     return isRange(saved) ? saved : '1h'
@@ -174,9 +181,10 @@ export function App() {
   return (
     <BrowserRouter>
       <PreferencesContext.Provider value={{
-        singleColumn, theme, defaultRange,
+        singleColumn, theme, timezone, defaultRange,
         setSingleColumn: value => { setSingleColumn(value); return writePreference('layout', value ? 'single' : 'grid') },
         setTheme: value => { setTheme(value); return writePreference('theme', value) },
+        setTimezone: value => { setDisplayTimeZone(value); setTimezone(value); return writePreference('timezone', value) },
         setDefaultRange: value => { setDefaultRange(value); return writePreference('range', value) },
       }}>
         <Application />

@@ -1,13 +1,14 @@
 import * as stylex from '@stylexjs/stylex'
 import { useQueries } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { usePreferences } from '../../app/preferences'
 import { Empty, ErrorState, Loading, Panel, Source, layout } from '../../components/ui/ui'
 import type { Resource, Series } from '../../lib/api/client'
 import { useApi } from '../../lib/api/queries'
 import { displayName } from '../host/resourceMetadata'
 import { metric } from './catalog'
 import { useChartCursor } from './cursor'
-import { axisTime, dateTime, duration, formatValue } from './format'
+import { axisTime, dateTime, duration, formatValue, timeZoneLabel } from './format'
 import { rangeMs, useTimeRange } from './range'
 import { bucketAt, niceCeiling, plotPath } from './series'
 
@@ -67,6 +68,7 @@ const bottom = h - 26
 type Track = { id: string; label: string; color: string; series: Series }
 
 function MultiSensorChart({ tracks }: { tracks: Track[] }) {
+  const { timezone } = usePreferences()
   const element = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(340)
   const { time, setTime } = useChartCursor()
@@ -87,9 +89,13 @@ function MultiSensorChart({ tracks }: { tracks: Track[] }) {
 
   const geometry = useMemo(() => {
     const allValues = tracks.flatMap(track => track.series.points.map(point => point.avg))
-    const min = Math.min(0, ...allValues)
+    const rawMin = allValues.length ? Math.min(...allValues) : 0
     const peak = allValues.length ? Math.max(...allValues) : 0
-    const max = niceCeiling(peak, '°C')
+    const min = rawMin >= 16 ? Math.floor((rawMin - 4) / 8) * 8 : Math.min(0, rawMin)
+    const spanNeeded = Math.max(16, (peak - min) * 1.15)
+    const max = min > 0
+      ? min + Math.ceil(spanNeeded / 16) * 16
+      : niceCeiling(peak, '°C')
     const x = (ts: number) => left + (ts - start) / span * (right - left)
     const y = (value: number) => bottom - (value - min) / (max - min) * (bottom - top)
     const lines = tracks.map(track => ({ ...track, d: plotPath(track.series, x, y) }))
@@ -109,7 +115,7 @@ function MultiSensorChart({ tracks }: { tracks: Track[] }) {
   return (
     <div {...stylex.props(layout.compact)}>
       <div {...stylex.props(layout.small)}>
-        <span>Média por intervalo · °C · UTC</span>
+        <span>Média por intervalo · °C · {timeZoneLabel(timezone)}</span>
       </div>
       <div ref={element} {...stylex.props(s.stage)}>
         <svg width={width} height={h} {...stylex.props(s.graph)} aria-hidden="true"

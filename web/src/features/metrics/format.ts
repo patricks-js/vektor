@@ -1,3 +1,5 @@
+import type { TimeZone } from '../../app/preferences'
+
 const decimal = new Intl.NumberFormat('en', { maximumFractionDigits: 1 })
 const temperature = new Intl.NumberFormat('en', { maximumFractionDigits: 2 })
 const rate = new Intl.NumberFormat('en', { maximumFractionDigits: 3 })
@@ -14,24 +16,40 @@ export function formatValue(value: number, unit: string) {
   return `${unit.endsWith('/s') ? rate.format(value) : temperature.format(value)}${unit ? ' ' + unit : ''}`
 }
 
-const timestamp = new Intl.DateTimeFormat('pt-BR', {
-  timeZone: 'UTC', dateStyle: 'medium', timeStyle: 'medium',
-})
-const clock = new Intl.DateTimeFormat('pt-BR', {
-  timeZone: 'UTC', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-})
-const day = new Intl.DateTimeFormat('pt-BR', {
-  timeZone: 'UTC', day: '2-digit', month: '2-digit',
-})
+let activeTimeZone: TimeZone = 'utc'
 
-export function dateTime(value: number | string) {
-  const ms = typeof value === 'string' ? Date.parse(value) : value
-  return Number.isFinite(ms) ? timestamp.format(ms) + ' UTC' : '—'
+export function setDisplayTimeZone(tz: TimeZone) {
+  activeTimeZone = tz
 }
 
-export function axisTime(value: number, span: number) {
-  if (span > 86_400_000) return day.format(value) + ' ' + clock.format(value)
-  return clock.format(value)
+export function timeZoneLabel(tz: TimeZone = activeTimeZone) {
+  return tz === 'local' ? 'Local' : 'UTC'
+}
+
+const formatters = {
+  utc: {
+    timestamp: new Intl.DateTimeFormat('pt-BR', { timeZone: 'UTC', dateStyle: 'medium', timeStyle: 'medium' }),
+    clock: new Intl.DateTimeFormat('pt-BR', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }),
+    day: new Intl.DateTimeFormat('pt-BR', { timeZone: 'UTC', day: '2-digit', month: '2-digit' }),
+  },
+  local: {
+    timestamp: new Intl.DateTimeFormat('pt-BR', { dateStyle: 'medium', timeStyle: 'medium' }),
+    clock: new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }),
+    day: new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit' }),
+  },
+}
+
+export function dateTime(value: number | string, tz: TimeZone = activeTimeZone) {
+  const ms = typeof value === 'string' ? Date.parse(value) : value
+  if (!Number.isFinite(ms)) return '—'
+  const text = formatters[tz].timestamp.format(ms)
+  return tz === 'utc' ? text + ' UTC' : text
+}
+
+export function axisTime(value: number, span: number, tz: TimeZone = activeTimeZone) {
+  const fmt = formatters[tz]
+  if (span > 86_400_000) return fmt.day.format(value) + ' ' + fmt.clock.format(value)
+  return fmt.clock.format(value)
 }
 
 export function duration(seconds: number) {

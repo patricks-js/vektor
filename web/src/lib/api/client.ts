@@ -64,6 +64,14 @@ export type AlertEvent = {
   notify_error?: string
 }
 
+export type UpdateInfo = {
+  current_version: string
+  latest_version?: string
+  update_available: boolean
+  release_url?: string
+  checked_at?: string
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -110,7 +118,7 @@ function requestSlots() {
 export function createApi(onUnauthorized?: () => void) {
   const schedule = requestSlots()
 
-  async function send<T>(path: ApiPaths | `/api/v1/resources/${string}` | `/api/v1/alerts/${string}`, init?: RequestInit, params?: Record<string, string>) {
+  async function send<T>(path: ApiPaths | `/api/v1/resources/${string}` | `/api/v1/alerts/${string}` | '/api/v1/update', init?: RequestInit, params?: Record<string, string>) {
     const url = params ? `${path}?${new URLSearchParams(params)}` : path
     let response: Response
     try {
@@ -131,7 +139,7 @@ export function createApi(onUnauthorized?: () => void) {
     return response.json() as Promise<T>
   }
 
-  function request<T>(path: ApiPaths | `/api/v1/resources/${string}` | `/api/v1/alerts/${string}`, init?: RequestInit, params?: Record<string, string>) {
+  function request<T>(path: ApiPaths | `/api/v1/resources/${string}` | `/api/v1/alerts/${string}` | '/api/v1/update', init?: RequestInit, params?: Record<string, string>) {
     return schedule(init?.signal, () => send<T>(path, init, params))
   }
 
@@ -201,6 +209,7 @@ export function createApi(onUnauthorized?: () => void) {
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': session.csrf_token },
       }),
     alertEvents: async (signal: AbortSignal) => (await request<{ events: AlertEvent[] }>('/api/v1/alerts/events', { signal })).events,
+    update: (signal: AbortSignal) => request<UpdateInfo>('/api/v1/update', { signal }),
   }
 }
 

@@ -74,6 +74,7 @@ export async function fixture(page: Page, options: {
     if (path === 'alerts/rules') return route.fulfill({ json: { rules: [] } })
     if (path === 'alerts/channels') return route.fulfill({ json: { channels: [] } })
     if (path === 'alerts/events') return route.fulfill({ json: { events: [] } })
+    if (path === 'update') return route.fulfill({ json: { current_version: '0.4.1', latest_version: '0.4.1', update_available: false } })
     if (path === 'metrics') {
       const metric_key = url.searchParams.get('metric')!
       const resource_id = url.searchParams.get('resource_id')!

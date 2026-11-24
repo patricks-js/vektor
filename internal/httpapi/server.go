@@ -42,6 +42,7 @@ type API struct {
 	auth     *auth.Store
 	alerts   *alerts.Store
 	notifier *alerts.Notifier
+	updates  *updateChecker
 	hub      *scheduler.LiveHub
 	mux      *http.ServeMux
 	ui       http.Handler
@@ -86,6 +87,7 @@ func New(cfg config.HTTPConfig, queries *history.QueryService, sessions *auth.St
 	})
 	a.route(http.MethodPost, apiPath+"/alerts/channels/test", true, a.testAlertChannel)
 	a.route(http.MethodGet, apiPath+"/alerts/events", true, a.listAlertEvents)
+	a.route(http.MethodGet, apiPath+"/update", true, a.update)
 	a.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if a.ui != nil && r.URL.Path != "/api" && !strings.HasPrefix(r.URL.Path, "/api/") {
 			a.ui.ServeHTTP(w, r)
@@ -106,6 +108,12 @@ func (a *API) WithUI(handler http.Handler) *API {
 func (a *API) WithAlerts(store *alerts.Store, notifier *alerts.Notifier) *API {
 	a.alerts = store
 	a.notifier = notifier
+	return a
+}
+
+// WithVersion enables release update checks against GitHub Releases.
+func (a *API) WithVersion(current string) *API {
+	a.updates = newUpdateChecker(current)
 	return a
 }
 

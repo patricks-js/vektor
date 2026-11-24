@@ -3,6 +3,7 @@ import { createContext, useContext } from 'react'
 export const ranges = ['15m', '1h', '6h', '24h', '7d'] as const
 export type TimeRange = typeof ranges[number]
 export type Theme = 'dark' | 'light'
+export type TimeZone = 'utc' | 'local'
 
 export function isRange(value: unknown): value is TimeRange {
   return ranges.some(range => range === value)
@@ -10,6 +11,10 @@ export function isRange(value: unknown): value is TimeRange {
 
 export function isTheme(value: unknown): value is Theme {
   return value === 'dark' || value === 'light'
+}
+
+export function isTimeZone(value: unknown): value is TimeZone {
+  return value === 'utc' || value === 'local'
 }
 
 export function readPreference(key: string) {
@@ -25,6 +30,8 @@ export const PreferencesContext = createContext<{
   setSingleColumn: (value: boolean) => boolean
   theme: Theme
   setTheme: (value: Theme) => boolean
+  timezone: TimeZone
+  setTimezone: (value: TimeZone) => boolean
   defaultRange: TimeRange
   setDefaultRange: (value: TimeRange) => boolean
 } | null>(null)

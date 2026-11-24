@@ -439,6 +439,16 @@ export function createDemoApi(onUnauthorized?: () => void): Api {
       requireSession()
       return [...getDemoAlertState().events]
     },
+    async update(signal) {
+      checkAbort(signal)
+      requireSession()
+      return {
+        current_version: __APP_VERSION__,
+        latest_version: __APP_VERSION__,
+        update_available: false,
+        checked_at: new Date().toISOString(),
+      }
+    },
   }
 }
 

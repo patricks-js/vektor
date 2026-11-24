@@ -10,7 +10,7 @@ import { ChartPanel } from '../metrics/ChartPanel'
 import { TemperatureChartPanel } from '../metrics/TemperatureChartPanel'
 import { metric } from '../metrics/catalog'
 import { ChartCursorProvider } from '../metrics/cursor'
-import { dateTime, duration } from '../metrics/format'
+import { dateTime, duration, timeZoneLabel } from '../metrics/format'
 import { TimeRangeSelector, usePeriodLink } from '../metrics/range'
 import { LiveValue, PersistedValue } from '../metrics/readings'
 
@@ -183,7 +183,7 @@ export function Overview() {
   const host = useHost()
   const filesystems = useResources('filesystem')
   const sensors = useResources('sensor')
-  const { singleColumn } = usePreferences()
+  const { singleColumn, timezone } = usePreferences()
   const id = host.data?.resource.id
   const root = filesystems.data?.find(resource => resource.active && metadataText(resource, 'mountpoint') === '/')
   const activeSensors = sensors.data?.filter(sensor => sensor.active) ?? []
@@ -205,7 +205,7 @@ export function Overview() {
       <section {...stylex.props(layout.stack)} aria-labelledby="timeline">
         <div {...stylex.props(layout.split)}>
           <h2 id="timeline" {...stylex.props(layout.sectionTitle)}>Atividade no período</h2>
-          <p {...stylex.props(layout.small)}>Histórico persistido · UTC</p>
+          <p {...stylex.props(layout.small)}>Histórico persistido · {timeZoneLabel(timezone)}</p>
         </div>
         <ChartCursorProvider>
           <div {...stylex.props(singleColumn ? layout.grid1 : layout.grid2)}>
