@@ -186,6 +186,7 @@ export function TemperatureChartPanel({ sensors }: { sensors: Resource[] }) {
   const { range } = useTimeRange()
   const active = useMemo(() => sensors.filter(sensor => sensor.active).slice(0, palette.length), [sensors])
 
+  const shortWindow = range === '15m' || range === '1h'
   const queries = useQueries({
     queries: active.map(sensor => ({
       queryKey: ['series', sensor.id, metric.temperature, range, 'auto'],
@@ -194,8 +195,8 @@ export function TemperatureChartPanel({ sensors }: { sensors: Resource[] }) {
         if (typeof range !== 'string') return api.series(sensor.id, metric.temperature, range.from, range.to, 'auto', signal)
         return api.series(sensor.id, metric.temperature, to - rangeMs[range], to, 'auto', signal)
       },
-      staleTime: 50_000,
-      refetchInterval: range === '7d' || typeof range !== 'string' ? 300_000 : 60_000,
+      staleTime: shortWindow ? 10_000 : 50_000,
+      refetchInterval: range === '7d' || typeof range !== 'string' ? 300_000 : shortWindow ? 15_000 : 60_000,
     })),
   })
 

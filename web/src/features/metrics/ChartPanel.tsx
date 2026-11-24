@@ -4,6 +4,7 @@ import { AlertTriangle } from 'lucide-react'
 import { Badge, Button, Empty, ErrorState, Loading, Panel, Source, layout } from '../../components/ui/ui'
 import { ApiError } from '../../lib/api/client'
 import type { Series, Step } from '../../lib/api/client'
+import { useLiveReading } from '../../lib/realtime/hooks'
 import { useChartCursor } from './cursor'
 import { axisTime, dateTime, duration, formatValue } from './format'
 import { useTimeRange } from './range'
@@ -64,7 +65,9 @@ const top = 12
 const bottom = h - 26
 const coveragePercent = new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 1 })
 
-function Chart({ series, color, title, scale }: { series: Series; color: SeriesColor; title: string; scale: ScaleMode }) {
+function Chart({ series, color, title, scale, liveValue }: {
+  series: Series; color: SeriesColor; title: string; scale: ScaleMode; liveValue?: number
+}) {
   const element = useRef<HTMLDivElement>(null)
   const gradId = useId()
   const [width, setWidth] = useState(340)
@@ -84,6 +87,7 @@ function Chart({ series, color, title, scale }: { series: Series; color: SeriesC
   const right = Math.max(left + 1, width - 10)
   const geometry = useMemo(() => {
     const values = series.points.map(point => point.avg)
+    if (liveValue !== undefined) values.push(liveValue)
     const min = Math.min(0, ...values)
     const peak = values.length ? Math.max(...values) : 0
     const max = scale === 'full' && series.unit === '%'
@@ -94,13 +98,18 @@ function Chart({ series, color, title, scale }: { series: Series; color: SeriesC
     const marks = series.points.filter((point, index, points) =>
       point.coverage < 1 || ((index === 0 || point.bucket_start_ms - points[index - 1].bucket_start_ms !== step) &&
         (index === points.length - 1 || points[index + 1].bucket_start_ms - point.bucket_start_ms !== step)))
+    const lastPoint = series.points.at(-1)
+    const liveTail = liveValue !== undefined && lastPoint && series.to_ms - lastPoint.bucket_start_ms <= step * 2
+      ? { x1: x(lastPoint.bucket_start_ms), y1: y(lastPoint.avg), x2: right, y2: y(liveValue) }
+      : undefined
     return {
       min, max, x, y,
       line: plotPath(series, x, y),
       area: areaPath(series, x, y, bottom),
       marks,
+      liveTail,
     }
-  }, [series, left, right, start, span, step, scale])
+  }, [series, left, right, start, span, step, scale, liveValue])
   const ticks = width < 430 ? [0, 0.5, 1] : [0, 0.25, 0.5, 0.75, 1]
   const cursor = time !== undefined && time >= start && time < series.to_ms ? time : undefined
   const point = cursor === undefined ? undefined : bucketAt(series, cursor)
@@ -145,6 +154,26 @@ function Chart({ series, color, title, scale }: { series: Series; color: SeriesC
             return <text key={tick} x={x} y={h - 6} textAnchor={tick === 0 ? 'start' : tick === 1 ? 'end' : 'middle'} {...stylex.props(s.text)}>{axisTime(ts, span)}</text>
           })}
           {geometry.area && <path d={geometry.area} fill={`url(#${gradId})`} />}
+          {geometry.liveTail && (
+            <>
+              <path
+                d={`M${geometry.liveTail.x1.toFixed(2)} ${geometry.liveTail.y1.toFixed(2)} L${geometry.liveTail.x2.toFixed(2)} ${geometry.liveTail.y2.toFixed(2)} L${geometry.liveTail.x2.toFixed(2)} ${bottom.toFixed(2)} L${geometry.liveTail.x1.toFixed(2)} ${bottom.toFixed(2)} Z`}
+                fill={`url(#${gradId})`}
+                opacity={0.75}
+              />
+              <line
+                x1={geometry.liveTail.x1}
+                y1={geometry.liveTail.y1}
+                x2={geometry.liveTail.x2}
+                y2={geometry.liveTail.y2}
+                stroke={paint}
+                strokeWidth={1.75}
+                strokeDasharray="3 2"
+              />
+              <circle cx={geometry.liveTail.x2} cy={geometry.liveTail.y2} r={5} fill={paint} opacity={0.22} />
+              <circle cx={geometry.liveTail.x2} cy={geometry.liveTail.y2} r={2.5} fill={paint} />
+            </>
+          )}
           <path d={geometry.line} stroke={paint} strokeWidth={1.75} fill="none" strokeLinejoin="round" data-history-line="" />
           {geometry.marks.map(p => (
             <circle key={p.bucket_start_ms} cx={geometry.x(p.bucket_start_ms)} cy={geometry.y(p.avg)}
@@ -203,11 +232,13 @@ export function ChartPanel({ title, subtitle, resourceId, metric, color = 'cpu',
   const [resolution, setResolution] = useState<{ key: string; step: Step }>()
   const step = resolution?.key === key ? resolution.step : 'auto'
   const query = useHistory(resourceId, metric, range, step)
+  const live = useLiveReading(resourceId ?? '', metric)
+  const liveValue = resourceId && typeof range === 'string' && range !== '7d' && live.state === 'valid' ? live.point?.value : undefined
   const pointLimit = query.error instanceof ApiError && query.error.code === 'point_limit'
 
   return (
     <Panel title={title} subtitle={subtitle} action={<Source>Histórico</Source>}>
-      {query.data?.points.length ? <Chart series={query.data} title={title} color={color} scale={scale} /> : (
+      {query.data?.points.length ? <Chart series={query.data} title={title} color={color} scale={scale} liveValue={liveValue} /> : (
         <div {...stylex.props(s.empty, layout.stack)}>
           {!resourceId ? (resourcePending ? <Loading label="Aguardando inventário…" /> : <Empty>Inventário indisponível para consultar esta série.</Empty>)
             : query.isPending ? <Loading label="Consultando histórico…" />

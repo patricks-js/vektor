@@ -6,6 +6,7 @@ import { rangeMs } from './range'
 
 export function useHistory(id: string | undefined, metric: string, range: HistoricalRange, step: Step = 'auto') {
   const api = useApi()
+  const shortWindow = range === '15m' || range === '1h'
   return useQuery({
     queryKey: ['series', id, metric, range, step],
     enabled: Boolean(id),
@@ -16,8 +17,8 @@ export function useHistory(id: string | undefined, metric: string, range: Histor
       if (typeof range !== 'string') return api.series(id, metric, range.from, range.to, step, signal)
       return api.series(id, metric, to - rangeMs[range], to, step, signal)
     },
-    staleTime: 50_000,
-    refetchInterval: range === '7d' || typeof range !== 'string' ? 300_000 : 60_000,
+    staleTime: shortWindow ? 10_000 : 50_000,
+    refetchInterval: range === '7d' || typeof range !== 'string' ? 300_000 : shortWindow ? 15_000 : 60_000,
   })
 }
 
