@@ -26,6 +26,11 @@ type Process struct {
 	Threads    int     `json:"threads"`
 }
 
+type procKey struct {
+	pid       int
+	startTime uint64
+}
+
 type procSample struct {
 	cpuTicks uint64
 	at       time.Time
@@ -36,10 +41,15 @@ type Manager struct {
 	pageSize uint64
 	clkTck   float64
 
-	mu       sync.Mutex
-	prev     map[int]procSample
-	uidCache map[int]string
-	uidAt    time.Time
+	mu             sync.Mutex
+	prev           map[procKey]procSample
+	prevAt         time.Time
+	cachedProcs    []Process
+	cachedProcsAt  time.Time
+	uidCache       map[int]string
+	uidAt          time.Time
+	unitFilesCache map[string]string
+	unitFilesAt    time.Time
 }
 
 func New(procRoot string) *Manager {
@@ -54,9 +64,15 @@ func New(procRoot string) *Manager {
 		procRoot: procRoot,
 		pageSize: pageSize,
 		clkTck:   100, // Standard USER_HZ on Linux x86_64/arm64
-		prev:     make(map[int]procSample),
+		prev:     make(map[procKey]procSample),
 		uidCache: make(map[int]string),
 	}
+}
+
+func (m *Manager) InvalidateServiceCache() {
+	m.mu.Lock()
+	m.unitFilesAt = time.Time{}
+	m.mu.Unlock()
 }
 
 func (m *Manager) lookupUser(uid int) string {
@@ -95,18 +111,26 @@ func (m *Manager) ListProcesses(ctx context.Context, sortBy string, limit int) (
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
+
+	m.mu.Lock()
+	if time.Since(m.cachedProcsAt) < 1500*time.Millisecond && len(m.cachedProcs) > 0 {
+		snapshot := make([]Process, len(m.cachedProcs))
+		copy(snapshot, m.cachedProcs)
+		m.mu.Unlock()
+		return sortAndLimitProcesses(snapshot, sortBy, limit), nil
+	}
+	prev := m.prev
+	prevAt := m.prevAt
+	m.mu.Unlock()
+
 	entries, err := os.ReadDir(m.procRoot)
 	if err != nil {
 		return nil, err
 	}
 
 	now := time.Now()
-	nextSamples := make(map[int]procSample, len(entries))
+	nextSamples := make(map[procKey]procSample, len(entries))
 	procs := make([]Process, 0, 128)
-
-	m.mu.Lock()
-	prev := m.prev
-	m.mu.Unlock()
 
 	for _, entry := range entries {
 		if ctx.Err() != nil {
@@ -123,14 +147,15 @@ func (m *Manager) ListProcesses(ctx context.Context, sortBy string, limit int) (
 		if err != nil {
 			continue
 		}
-		p, ticks, ok := parseProcStat(pid, string(statRaw), m.pageSize)
+		p, ticks, startTime, ok := parseProcStat(pid, string(statRaw), m.pageSize)
 		if !ok {
 			continue
 		}
-		nextSamples[pid] = procSample{cpuTicks: ticks, at: now}
-		if old, existed := prev[pid]; existed {
+		key := procKey{pid: pid, startTime: startTime}
+		nextSamples[key] = procSample{cpuTicks: ticks, at: now}
+		if old, existed := prev[key]; existed {
 			dt := now.Sub(old.at).Seconds()
-			if dt > 0.05 && ticks >= old.cpuTicks {
+			if dt >= 0.5 && ticks >= old.cpuTicks {
 				deltaSec := float64(ticks-old.cpuTicks) / m.clkTck
 				p.CPUPercent = (deltaSec / dt) * 100
 			}
@@ -155,9 +180,19 @@ func (m *Manager) ListProcesses(ctx context.Context, sortBy string, limit int) (
 	}
 
 	m.mu.Lock()
-	m.prev = nextSamples
+	if prevAt.IsZero() || now.Sub(prevAt) >= time.Second {
+		m.prev = nextSamples
+		m.prevAt = now
+	}
+	m.cachedProcs = make([]Process, len(procs))
+	copy(m.cachedProcs, procs)
+	m.cachedProcsAt = now
 	m.mu.Unlock()
 
+	return sortAndLimitProcesses(procs, sortBy, limit), nil
+}
+
+func sortAndLimitProcesses(procs []Process, sortBy string, limit int) []Process {
 	sort.Slice(procs, func(i, j int) bool {
 		if sortBy == "memory" {
 			if procs[i].RSSBytes != procs[j].RSSBytes {
@@ -173,30 +208,30 @@ func (m *Manager) ListProcesses(ctx context.Context, sortBy string, limit int) (
 		}
 		return procs[i].PID < procs[j].PID
 	})
-
 	if len(procs) > limit {
 		procs = procs[:limit]
 	}
-	return procs, nil
+	return procs
 }
 
 // parseProcStat extracts fields from /proc/<pid>/stat safely handling spaces/parens in comm.
-func parseProcStat(pid int, raw string, pageSize uint64) (Process, uint64, bool) {
+func parseProcStat(pid int, raw string, pageSize uint64) (Process, uint64, uint64, bool) {
 	open := strings.IndexByte(raw, '(')
 	close := strings.LastIndexByte(raw, ')')
 	if open < 0 || close <= open || close+2 >= len(raw) {
-		return Process{}, 0, false
+		return Process{}, 0, 0, false
 	}
 	name := raw[open+1 : close]
 	fields := strings.Fields(raw[close+2:])
-	// fields[0]=state, [1]=ppid, [11]=utime, [12]=stime, [17]=num_threads, [21]=rss
+	// fields[0]=state, [1]=ppid, [11]=utime, [12]=stime, [17]=num_threads, [19]=starttime, [21]=rss
 	if len(fields) < 22 {
-		return Process{}, 0, false
+		return Process{}, 0, 0, false
 	}
 	ppid, _ := strconv.Atoi(fields[1])
 	utime, _ := strconv.ParseUint(fields[11], 10, 64)
 	stime, _ := strconv.ParseUint(fields[12], 10, 64)
 	threads, _ := strconv.Atoi(fields[17])
+	startTime, _ := strconv.ParseUint(fields[19], 10, 64)
 	rssPages, _ := strconv.ParseUint(fields[21], 10, 64)
 
 	return Process{
@@ -206,7 +241,7 @@ func parseProcStat(pid int, raw string, pageSize uint64) (Process, uint64, bool)
 		State:    fields[0],
 		RSSBytes: rssPages * pageSize,
 		Threads:  threads,
-	}, utime + stime, true
+	}, utime + stime, startTime, true
 }
 
 func parseProcUID(status string) (int, bool) {

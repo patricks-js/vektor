@@ -22,6 +22,29 @@ export const layout = stylex.create({
   pageTitle: { fontSize: 24, lineHeight: '30px', fontWeight: 600, letterSpacing: '-0.025em', overflowWrap: 'anywhere', color: 'var(--vk-text-primary)' },
 })
 
+export const tableStyles = stylex.create({
+  scroll: {
+    overflowX: 'auto', minWidth: 0, borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--vk-border-subtle)',
+    borderRadius: 'var(--vk-radius-2)', backgroundColor: 'var(--vk-surface-1)',
+  },
+  table: { borderCollapse: 'collapse', minWidth: 460, width: '100%', textAlign: 'start', tableLayout: 'auto' },
+  th: {
+    color: 'var(--vk-text-secondary)', fontSize: 12, lineHeight: '16px', backgroundColor: 'var(--vk-surface-2)',
+    textAlign: 'start', paddingBlock: 8, paddingInline: 14, fontWeight: 500,
+    borderBlockEndWidth: 1, borderBlockEndStyle: 'solid', borderBlockEndColor: 'var(--vk-border-subtle)',
+  },
+  row: {
+    backgroundColor: { default: 'transparent', ':hover': 'var(--vk-surface-2)' },
+    transition: 'background-color 150ms',
+  },
+  td: {
+    borderBlockStartWidth: 1, borderBlockStartStyle: 'solid', borderBlockStartColor: 'var(--vk-border-subtle)',
+    paddingBlock: 10, paddingInline: 14, minHeight: 44, verticalAlign: 'middle',
+    overflowWrap: 'anywhere', fontSize: 13, textAlign: 'start',
+  },
+  filters: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 170px), 1fr))', gap: 12, maxWidth: 540 },
+})
+
 const ui = stylex.create({
   button: {
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, paddingInline: 14,

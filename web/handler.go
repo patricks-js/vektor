@@ -36,7 +36,7 @@ func handler(dist fs.FS) http.Handler {
 		}
 
 		switch r.URL.Path {
-		case "/", "/login", "/overview", "/host", "/host/cpu", "/host/memory", "/host/storage", "/host/network", "/host/sensors", "/settings":
+		case "/", "/login", "/overview", "/host", "/host/cpu", "/host/memory", "/host/storage", "/host/network", "/host/sensors", "/host/services", "/host/processes", "/settings":
 			// FileServer serves index.html for the root without redirecting the browser.
 			copy := r.Clone(r.Context())
 			copy.URL.Path = "/"

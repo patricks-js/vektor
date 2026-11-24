@@ -5,15 +5,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var (
-	ErrInvalidUnit  = errors.New("invalid systemd unit name")
-	ErrUnavailable  = errors.New("systemd or journald unavailable")
+	ErrInvalidUnit   = errors.New("invalid systemd unit name")
+	ErrUnavailable   = errors.New("systemd or journald unavailable")
+	ErrPermission    = errors.New("insufficient permissions to read journald logs")
 )
 
 type Service struct {
@@ -64,11 +67,29 @@ func (m *Manager) ListServices(ctx context.Context, stateFilter string) ([]Servi
 		return nil, ErrUnavailable
 	}
 	cmd := exec.CommandContext(ctx, "systemctl", "list-units", "--type=service", "--all", "--no-pager", "--no-legend", "--output=json")
-	var stdout bytes.Buffer
+	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil && stdout.Len() == 0 {
+		msg := strings.TrimSpace(stderr.String())
+		if msg != "" {
+			return nil, fmt.Errorf("systemctl: %s", msg)
+		}
 		return nil, err
 	}
+
+	unitFiles := m.getUnitFiles(ctx)
+	return parseSystemctlUnits(stdout.Bytes(), unitFiles, stateFilter)
+}
+
+func (m *Manager) getUnitFiles(ctx context.Context) map[string]string {
+	m.mu.Lock()
+	if time.Since(m.unitFilesAt) < 60*time.Second && m.unitFilesCache != nil {
+		cached := m.unitFilesCache
+		m.mu.Unlock()
+		return cached
+	}
+	m.mu.Unlock()
 
 	unitFiles := make(map[string]string)
 	filesCmd := exec.CommandContext(ctx, "systemctl", "list-unit-files", "--type=service", "--no-pager", "--no-legend", "--output=json")
@@ -83,7 +104,11 @@ func (m *Manager) ListServices(ctx context.Context, stateFilter string) ([]Servi
 		}
 	}
 
-	return parseSystemctlUnits(stdout.Bytes(), unitFiles, stateFilter)
+	m.mu.Lock()
+	m.unitFilesCache = unitFiles
+	m.unitFilesAt = time.Now()
+	m.mu.Unlock()
+	return unitFiles
 }
 
 func parseSystemctlUnits(raw []byte, unitFiles map[string]string, stateFilter string) ([]Service, error) {
@@ -184,10 +209,23 @@ func (m *Manager) ServiceLogs(ctx context.Context, unit string, lines int, prior
 		args = append(args, "-p", p)
 	}
 	cmd := exec.CommandContext(ctx, "journalctl", args...)
-	var stdout bytes.Buffer
+	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
-	if err := cmd.Run(); err != nil && stdout.Len() == 0 {
-		return nil, err
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	errText := strings.ToLower(strings.TrimSpace(stderr.String()))
+	if stdout.Len() == 0 {
+		if strings.Contains(errText, "not seeing messages from other users") ||
+			strings.Contains(errText, "permission denied") ||
+			strings.Contains(errText, "access denied") {
+			return nil, ErrPermission
+		}
+		if err != nil {
+			if errText != "" {
+				return nil, fmt.Errorf("journalctl: %s", strings.TrimSpace(stderr.String()))
+			}
+			return nil, err
+		}
 	}
 	return parseJournalJSON(stdout.Bytes()), nil
 }

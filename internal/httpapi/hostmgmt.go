@@ -62,6 +62,10 @@ func (a *API) services(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	items, err := a.mgmt.ListServices(r.Context(), state)
+	if errors.Is(err, hostmgmt.ErrPermission) {
+		writeError(w, http.StatusForbidden, "journald_permission_denied", "vektor user lacks systemd-journal group permission to read logs")
+		return
+	}
 	if errors.Is(err, hostmgmt.ErrUnavailable) {
 		writeError(w, http.StatusServiceUnavailable, "systemd_unavailable", "systemd is not available on this host")
 		return
@@ -105,6 +109,10 @@ func (a *API) serviceLogs(w http.ResponseWriter, r *http.Request) {
 	entries, err := a.mgmt.ServiceLogs(r.Context(), unit, lines, priority)
 	if errors.Is(err, hostmgmt.ErrInvalidUnit) {
 		invalidParams(w, "Invalid service unit name")
+		return
+	}
+	if errors.Is(err, hostmgmt.ErrPermission) {
+		writeError(w, http.StatusForbidden, "journald_permission_denied", "vektor user lacks systemd-journal group permission to read logs")
 		return
 	}
 	if errors.Is(err, hostmgmt.ErrUnavailable) {

@@ -13,7 +13,7 @@ func TestDashboardRouting(t *testing.T) {
 		"index.html":         {Data: []byte("<html>Vektor</html>")},
 		"assets/app-hash.js": {Data: []byte("export {}")},
 	})
-	for _, path := range []string{"/", "/login", "/overview", "/host", "/host/cpu", "/host/memory", "/host/storage", "/host/network", "/host/sensors", "/settings"} {
+	for _, path := range []string{"/", "/login", "/overview", "/host", "/host/cpu", "/host/memory", "/host/storage", "/host/network", "/host/sensors", "/host/services", "/host/processes", "/settings"} {
 		t.Run(path, func(t *testing.T) {
 			w := httptest.NewRecorder()
 			w.Header().Set("Cache-Control", "no-store")

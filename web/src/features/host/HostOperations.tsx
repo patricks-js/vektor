@@ -2,33 +2,17 @@ import * as stylex from '@stylexjs/stylex'
 import { FileText, Play, RefreshCw, RotateCw, Skull, Square, X } from 'lucide-react'
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Badge, Button, Empty, ErrorState, Loading, Modal, Panel, SelectField, StatusDot, TextField, layout } from '../../components/ui/ui'
+import { Badge, Button, Empty, ErrorState, Loading, Modal, Panel, SelectField, StatusDot, TextField, layout, tableStyles } from '../../components/ui/ui'
 import type { ProcessInfo, ServiceAction } from '../../lib/api/client'
 import { useApi } from '../../lib/api/queries'
 import { useSession } from '../auth/session'
 import { dateTime, formatValue } from '../metrics/format'
 
 const s = stylex.create({
-  scroll: {
-    overflowX: 'auto', minWidth: 0, borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--vk-border-subtle)',
-    borderRadius: 'var(--vk-radius-2)', backgroundColor: 'var(--vk-surface-1)',
-  },
-  table: { borderCollapse: 'collapse', minWidth: 620, width: '100%', textAlign: 'start' },
-  th: {
-    color: 'var(--vk-text-secondary)', fontSize: 12, lineHeight: '16px', backgroundColor: 'var(--vk-surface-2)',
-    textAlign: 'start', paddingBlock: 8, paddingInline: 14, fontWeight: 500,
-    borderBlockEndWidth: 1, borderBlockEndStyle: 'solid', borderBlockEndColor: 'var(--vk-border-subtle)',
-  },
-  row: { backgroundColor: { default: 'transparent', ':hover': 'var(--vk-surface-2)' }, transition: 'background-color 150ms' },
-  td: {
-    borderBlockStartWidth: 1, borderBlockStartStyle: 'solid', borderBlockStartColor: 'var(--vk-border-subtle)',
-    paddingBlock: 10, paddingInline: 14, verticalAlign: 'middle', fontSize: 13, overflowWrap: 'anywhere',
-    textAlign: 'start',
-  },
+  wideTable: { minWidth: 620 },
   center: { textAlign: 'center' },
   num: { fontFamily: 'var(--vk-mono)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' },
   cmd: { fontFamily: 'var(--vk-mono)', fontSize: 11, color: 'var(--vk-text-muted)', maxWidth: 360, overflowWrap: 'anywhere' },
-  filters: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 170px), 1fr))', gap: 12, maxWidth: 540 },
   actions: { display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'nowrap' },
   logBox: {
     maxHeight: 420, overflowY: 'auto', borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--vk-border-subtle)',
@@ -71,7 +55,7 @@ function ServiceLogsPanel({ unit, onClose }: { unit: string; onClose: () => void
         <Button variant="quiet" aria-label="Fechar logs" onClick={onClose}><X size={16} aria-hidden /></Button>
       </div>
     }>
-      <div {...stylex.props(s.filters)}>
+      <div {...stylex.props(tableStyles.filters)}>
         <SelectField label="Severidade mínima" value={priority} onChange={e => setPriority(e.currentTarget.value as 'all' | 'info' | 'warning' | 'err')}>
           <option value="all">Todas</option>
           <option value="info">Info</option>
@@ -152,7 +136,7 @@ export function ServicesView() {
           <RefreshCw size={14} aria-hidden /> Atualizar
         </Button>
       }>
-        <div {...stylex.props(s.filters)}>
+        <div {...stylex.props(tableStyles.filters)}>
           <TextField label="Buscar serviço" placeholder="Filtrar por nome ou descrição…" value={search} onChange={e => setSearch(e.currentTarget.value)} type="search" />
           <SelectField label="Estado" value={stateFilter} onChange={e => setStateFilter(e.currentTarget.value as 'all' | 'active' | 'failed' | 'inactive')}>
             <option value="all">Todos</option>
@@ -165,30 +149,30 @@ export function ServicesView() {
         {query.isPending && <Loading label="Listando serviços…" />}
         {query.isError && <ErrorState error={query.error} retry={() => { void query.refetch() }} title="Não foi possível listar serviços" />}
         {query.data && (items.length === 0 ? <Empty>Nenhum serviço corresponde aos filtros.</Empty> : (
-          <div tabIndex={0} role="region" aria-label="Tabela de serviços systemd" {...stylex.props(s.scroll)}>
-            <table {...stylex.props(s.table)} aria-label="Serviços systemd">
+          <div tabIndex={0} role="region" aria-label="Tabela de serviços systemd" {...stylex.props(tableStyles.scroll)}>
+            <table {...stylex.props(tableStyles.table, s.wideTable)} aria-label="Serviços systemd">
               <thead><tr>
-                <th scope="col" {...stylex.props(s.th)}>Serviço</th>
-                <th scope="col" {...stylex.props(s.th)}>Estado</th>
-                <th scope="col" {...stylex.props(s.th)}>Boot</th>
-                <th scope="col" {...stylex.props(s.th)}>Descrição</th>
-                <th scope="col" {...stylex.props(s.th)}>Ações</th>
+                <th scope="col" {...stylex.props(tableStyles.th)}>Serviço</th>
+                <th scope="col" {...stylex.props(tableStyles.th)}>Estado</th>
+                <th scope="col" {...stylex.props(tableStyles.th)}>Boot</th>
+                <th scope="col" {...stylex.props(tableStyles.th)}>Descrição</th>
+                <th scope="col" {...stylex.props(tableStyles.th)}>Ações</th>
               </tr></thead>
               <tbody>
                 {items.map(svc => {
                   const tone = svc.active_state === 'failed' ? 'critical' : svc.active_state === 'active' ? 'success' : 'neutral'
                   const isSelf = svc.name === 'vektord.service'
                   return (
-                    <tr key={svc.name} {...stylex.props(s.row)}>
-                      <th scope="row" {...stylex.props(s.td, s.num)}>{svc.name}</th>
-                      <td {...stylex.props(s.td)}>
+                    <tr key={svc.name} {...stylex.props(tableStyles.row)}>
+                      <th scope="row" {...stylex.props(tableStyles.td, s.num)}>{svc.name}</th>
+                      <td {...stylex.props(tableStyles.td)}>
                         <Badge tone={tone} icon={<StatusDot tone={tone} />}>
                           {svc.active_state} ({svc.sub_state})
                         </Badge>
                       </td>
-                      <td {...stylex.props(s.td, layout.small)}>{svc.unit_file_state || '—'}</td>
-                      <td {...stylex.props(s.td, layout.small)}>{svc.description || '—'}</td>
-                      <td {...stylex.props(s.td)}>
+                      <td {...stylex.props(tableStyles.td, layout.small)}>{svc.unit_file_state || '—'}</td>
+                      <td {...stylex.props(tableStyles.td, layout.small)}>{svc.description || '—'}</td>
+                      <td {...stylex.props(tableStyles.td)}>
                         <div {...stylex.props(s.actions)}>
                           <Button variant="outline" title="Reiniciar" aria-label={`Reiniciar ${svc.name}`}
                             onClick={() => { setActionError(undefined); setPendingAction({ unit: svc.name, action: 'restart' }) }}>
@@ -286,7 +270,7 @@ export function ProcessesView() {
           <RefreshCw size={14} aria-hidden /> Atualizar
         </Button>
       }>
-        <div {...stylex.props(s.filters)}>
+        <div {...stylex.props(tableStyles.filters)}>
           <TextField label="Buscar processo" placeholder="PID, nome, comando ou usuário…" value={search} onChange={e => setSearch(e.currentTarget.value)} type="search" />
           <SelectField label="Ordenar por" value={sort} onChange={e => setSort(e.currentTarget.value === 'memory' ? 'memory' : 'cpu')}>
             <option value="cpu">Uso de CPU</option>
@@ -297,30 +281,30 @@ export function ProcessesView() {
         {query.isPending && <Loading label="Lendo processos…" />}
         {query.isError && <ErrorState error={query.error} retry={() => { void query.refetch() }} title="Não foi possível listar processos" />}
         {query.data && (items.length === 0 ? <Empty>Nenhum processo corresponde à busca.</Empty> : (
-          <div tabIndex={0} role="region" aria-label="Tabela de processos" {...stylex.props(s.scroll)}>
-            <table {...stylex.props(s.table)} aria-label="Processos ativos">
+          <div tabIndex={0} role="region" aria-label="Tabela de processos" {...stylex.props(tableStyles.scroll)}>
+            <table {...stylex.props(tableStyles.table, s.wideTable)} aria-label="Processos ativos">
               <thead><tr>
-                <th scope="col" {...stylex.props(s.th)}>PID</th>
-                <th scope="col" {...stylex.props(s.th)}>Processo</th>
-                <th scope="col" {...stylex.props(s.th)}>Usuário</th>
-                <th scope="col" {...stylex.props(s.th)}>CPU</th>
-                <th scope="col" {...stylex.props(s.th)}>RAM (RSS)</th>
-                <th scope="col" {...stylex.props(s.th, s.center)}>Threads</th>
-                <th scope="col" {...stylex.props(s.th)}>Ações</th>
+                <th scope="col" {...stylex.props(tableStyles.th)}>PID</th>
+                <th scope="col" {...stylex.props(tableStyles.th)}>Processo</th>
+                <th scope="col" {...stylex.props(tableStyles.th)}>Usuário</th>
+                <th scope="col" {...stylex.props(tableStyles.th)}>CPU</th>
+                <th scope="col" {...stylex.props(tableStyles.th)}>RAM (RSS)</th>
+                <th scope="col" {...stylex.props(tableStyles.th, s.center)}>Threads</th>
+                <th scope="col" {...stylex.props(tableStyles.th)}>Ações</th>
               </tr></thead>
               <tbody>
                 {items.map(proc => (
-                  <tr key={proc.pid} {...stylex.props(s.row)}>
-                    <td {...stylex.props(s.td, s.num)}>{proc.pid}</td>
-                    <th scope="row" {...stylex.props(s.td)}>
+                  <tr key={proc.pid} {...stylex.props(tableStyles.row)}>
+                    <td {...stylex.props(tableStyles.td, s.num)}>{proc.pid}</td>
+                    <th scope="row" {...stylex.props(tableStyles.td)}>
                       <div>{proc.name}</div>
                       <div {...stylex.props(s.cmd)}>{proc.command}</div>
                     </th>
-                    <td {...stylex.props(s.td, layout.small)}>{proc.user || '—'}</td>
-                    <td {...stylex.props(s.td, s.num)}>{formatValue(proc.cpu_percent, '%')}</td>
-                    <td {...stylex.props(s.td, s.num)}>{formatValue(proc.rss_bytes, 'bytes')}</td>
-                    <td {...stylex.props(s.td, s.num, s.center)}>{proc.threads}</td>
-                    <td {...stylex.props(s.td)}>
+                    <td {...stylex.props(tableStyles.td, layout.small)}>{proc.user || '—'}</td>
+                    <td {...stylex.props(tableStyles.td, s.num)}>{formatValue(proc.cpu_percent, '%')}</td>
+                    <td {...stylex.props(tableStyles.td, s.num)}>{formatValue(proc.rss_bytes, 'bytes')}</td>
+                    <td {...stylex.props(tableStyles.td, s.num, s.center)}>{proc.threads}</td>
+                    <td {...stylex.props(tableStyles.td)}>
                       <Button variant="quiet" disabled={proc.pid <= 1} aria-label={`Encerrar processo ${proc.name} (${proc.pid})`}
                         title={proc.pid <= 1 ? 'PID protegido' : 'Enviar sinal'}
                         onClick={() => { setActionError(undefined); setTarget(proc) }}>

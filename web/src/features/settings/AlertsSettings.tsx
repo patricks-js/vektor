@@ -5,7 +5,8 @@ import type { FormEvent } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Badge, Button, Empty, ErrorState, Loading, SelectField, StatusDot, TextField, layout } from '../../components/ui/ui'
 import type { AlertRule } from '../../lib/api/client'
-import { useApi } from '../../lib/api/queries'
+import { useApi, useResources } from '../../lib/api/queries'
+import { displayName, metadataText } from '../host/resourceMetadata'
 import { useSession } from '../auth/session'
 import { metric } from '../metrics/catalog'
 import { dateTime } from '../metrics/format'
@@ -30,12 +31,12 @@ const s = stylex.create({
 })
 
 const metricOptions = [
-  { value: metric.cpu, label: 'CPU total (%)', resource: 'host:local', unit: '%' },
-  { value: metric.ram, label: 'Memória RAM (%)', resource: 'host:local', unit: '%' },
-  { value: metric.swap, label: 'Swap (%)', resource: 'host:local', unit: '%' },
-  { value: metric.load1, label: 'Carga média (1m)', resource: 'host:local', unit: '' },
-  { value: metric.fs, label: 'Disco / (%)', resource: 'fs:root', unit: '%' },
-  { value: metric.temperature, label: 'Temperatura (°C)', resource: 'sensor:k10temp-tctl', unit: '°C' },
+  { value: metric.cpu, label: 'CPU total (%)', kind: 'host' as const },
+  { value: metric.ram, label: 'Memória RAM (%)', kind: 'host' as const },
+  { value: metric.swap, label: 'Swap (%)', kind: 'host' as const },
+  { value: metric.load1, label: 'Carga média (1m)', kind: 'host' as const },
+  { value: metric.fs, label: 'Sistema de arquivos (%)', kind: 'filesystem' as const },
+  { value: metric.temperature, label: 'Temperatura do sensor (°C)', kind: 'sensor' as const },
 ]
 
 function metricLabel(key: string) {
@@ -48,23 +49,51 @@ export function AlertsSection() {
   const cache = useQueryClient()
   const rulesQuery = useQuery({ queryKey: ['alerts', 'rules'], queryFn: ({ signal }) => api.alertRules(signal) })
   const eventsQuery = useQuery({ queryKey: ['alerts', 'events'], queryFn: ({ signal }) => api.alertEvents(signal) })
+  const filesystems = useResources('filesystem')
+  const sensors = useResources('sensor')
+
+  const activeFilesystems = (filesystems.data ?? []).filter(r => r.active)
+  const activeSensors = (sensors.data ?? []).filter(r => r.active)
 
   const [adding, setAdding] = useState(false)
   const [name, setName] = useState('')
   const [metricKey, setMetricKey] = useState<string>(metric.cpu)
+  const [resourceId, setResourceId] = useState('host:local')
   const [operator, setOperator] = useState<'gt' | 'lt'>('gt')
   const [threshold, setThreshold] = useState('85')
   const [durationSeconds, setDurationSeconds] = useState('60')
   const [busy, setBusy] = useState(false)
   const [feedback, setFeedback] = useState('')
 
+  const selectedOption = metricOptions.find(opt => opt.value === metricKey) ?? metricOptions[0]
+  const resourceChoices = selectedOption.kind === 'filesystem' ? activeFilesystems
+    : selectedOption.kind === 'sensor' ? activeSensors : []
+
+  function defaultResourceFor(nextMetric: string) {
+    const opt = metricOptions.find(o => o.value === nextMetric)
+    if (opt?.kind === 'filesystem') {
+      const root = activeFilesystems.find(r => metadataText(r, 'mountpoint') === '/')
+      return root?.id ?? activeFilesystems[0]?.id ?? ''
+    }
+    if (opt?.kind === 'sensor') {
+      return activeSensors[0]?.id ?? ''
+    }
+    return 'host:local'
+  }
+
+  function resolveResourceName(id: string) {
+    if (id === 'host:local') return 'Host'
+    const found = [...activeFilesystems, ...activeSensors].find(r => r.id === id)
+    return found ? displayName(found) : id
+  }
+
   async function onCreate(event: FormEvent) {
     event.preventDefault()
-    const option = metricOptions.find(opt => opt.value === metricKey) ?? metricOptions[0]
+    const targetResource = selectedOption.kind === 'host' ? 'host:local' : (resourceId || defaultResourceFor(metricKey))
     const numThreshold = Number(threshold)
     const numDuration = Number(durationSeconds)
-    if (!name.trim() || !Number.isFinite(numThreshold) || !Number.isFinite(numDuration) || numDuration < 0) {
-      setFeedback('Preencha nome, limite e duração válidos.')
+    if (!name.trim() || !targetResource || !Number.isFinite(numThreshold) || !Number.isFinite(numDuration) || numDuration < 0) {
+      setFeedback('Preencha nome, recurso, limite e duração válidos.')
       return
     }
     setBusy(true)
@@ -72,7 +101,7 @@ export function AlertsSection() {
     try {
       await api.createAlertRule(session, {
         name: name.trim(),
-        resource_id: option.resource,
+        resource_id: targetResource,
         metric_key: metricKey,
         operator,
         threshold: numThreshold,
@@ -139,7 +168,7 @@ export function AlertsSection() {
                     <span>{rule.name}</span>
                   </span>
                   <span {...stylex.props(layout.small)}>
-                    {metricLabel(rule.metric_key)} {rule.operator === 'gt' ? '>' : '<'} {rule.threshold} · por {rule.duration_seconds}s
+                    {metricLabel(rule.metric_key)} ({resolveResourceName(rule.resource_id)}) {rule.operator === 'gt' ? '>' : '<'} {rule.threshold} · por {rule.duration_seconds}s
                   </span>
                 </div>
                 <div {...stylex.props(layout.row)}>
@@ -160,9 +189,20 @@ export function AlertsSection() {
         <form onSubmit={onCreate} {...stylex.props(s.formBox)}>
           <div {...stylex.props(s.formGrid)}>
             <TextField label="Nome da regra" placeholder="Ex.: CPU acima de 85%" value={name} onChange={e => setName(e.currentTarget.value)} required />
-            <SelectField label="Métrica" value={metricKey} onChange={e => setMetricKey(e.currentTarget.value)}>
+            <SelectField label="Métrica" value={metricKey} onChange={e => {
+              const next = e.currentTarget.value
+              setMetricKey(next)
+              setResourceId(defaultResourceFor(next))
+            }}>
               {metricOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
             </SelectField>
+            {selectedOption.kind !== 'host' && (
+              <SelectField label="Recurso" value={resourceId || defaultResourceFor(metricKey)} onChange={e => setResourceId(e.currentTarget.value)}>
+                {resourceChoices.length === 0
+                  ? <option value="">Nenhum recurso ativo disponível</option>
+                  : resourceChoices.map(r => <option key={r.id} value={r.id}>{displayName(r)}</option>)}
+              </SelectField>
+            )}
             <SelectField label="Condição" value={operator} onChange={e => setOperator(e.currentTarget.value === 'lt' ? 'lt' : 'gt')}>
               <option value="gt">Maior que (&gt;)</option>
               <option value="lt">Menor que (&lt;)</option>

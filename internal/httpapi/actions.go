@@ -1,10 +1,12 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"os"
 	"strconv"
+	"time"
 
 	"vektor/internal/audit"
 	"vektor/internal/ctl"
@@ -19,7 +21,9 @@ func (a *API) recordAudit(r *http.Request, action, target, status, detail string
 	if id, ok := r.Context().Value(identityKey{}).(identity); ok && id.session.Username != "" {
 		actor = id.session.Username
 	}
-	_, _ = a.audit.Record(r.Context(), actor, action, target, status, detail)
+	auditCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 2*time.Second)
+	defer cancel()
+	_, _ = a.audit.Record(auditCtx, actor, action, target, status, detail)
 }
 
 func (a *API) executeControl(w http.ResponseWriter, r *http.Request, req ctl.Request, targetLabel string) {
@@ -48,6 +52,9 @@ func (a *API) executeControl(w http.ResponseWriter, r *http.Request, req ctl.Req
 		return
 	}
 	a.recordAudit(r, req.Action, targetLabel, "ok", resp.Message)
+	if a.mgmt != nil && len(req.Action) > 8 && req.Action[:8] == "service." {
+		a.mgmt.InvalidateServiceCache()
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 

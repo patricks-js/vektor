@@ -7,15 +7,15 @@ import (
 
 func TestParseProcStatAndUID(t *testing.T) {
 	raw := "1234 (kworker/u16:2 (test)) S 2 0 0 0 -1 4194368 0 0 0 0 150 45 0 0 20 0 4 0 1000 0 256 18446744073709551615"
-	p, ticks, ok := parseProcStat(1234, raw, 4096)
+	p, ticks, startTime, ok := parseProcStat(1234, raw, 4096)
 	if !ok {
 		t.Fatal("expected parseProcStat to succeed")
 	}
 	if p.Name != "kworker/u16:2 (test)" || p.State != "S" || p.PPID != 2 || p.Threads != 4 {
 		t.Fatalf("unexpected process: %+v", p)
 	}
-	if ticks != 195 || p.RSSBytes != 256*4096 {
-		t.Fatalf("unexpected ticks=%d rss=%d", ticks, p.RSSBytes)
+	if ticks != 195 || startTime != 1000 || p.RSSBytes != 256*4096 {
+		t.Fatalf("unexpected ticks=%d startTime=%d rss=%d", ticks, startTime, p.RSSBytes)
 	}
 
 	uid, ok := parseProcUID("Name:\tvektord\nUid:\t998\t998\t998\t998\n")
