@@ -3,6 +3,8 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 
 	"vektor/internal/ctl"
@@ -491,4 +493,96 @@ func (a *API) deleteIncusBackup(w http.ResponseWriter, r *http.Request) {
 		Target: name,
 		Signal: backup,
 	}, "incus:"+name+"/backup:"+backup)
+}
+
+func (a *API) exportIncusBackup(w http.ResponseWriter, r *http.Request) {
+	if _, ok := queryValues(w, r); !ok {
+		return
+	}
+	name := r.PathValue("name")
+	backup := r.PathValue("backup")
+	if !incus.ValidInstanceName(name) || !incus.ValidSnapshotName(backup) {
+		invalidParams(w, "Invalid instance or backup name")
+		return
+	}
+	if a.ctl == nil {
+		writeError(w, http.StatusServiceUnavailable, "ctl_unavailable", "vektor-ctl helper is not configured")
+		return
+	}
+	stream, err := a.ctl.DoStream(r.Context(), ctl.Request{
+		Action: "incus.backup.export",
+		Target: name,
+		Signal: backup,
+	})
+	if errors.Is(err, ctl.ErrUnavailable) {
+		writeError(w, http.StatusServiceUnavailable, "ctl_unavailable", "vektor-ctl.socket is not active on this host")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "incus_error", err.Error())
+		return
+	}
+	defer stream.Close()
+
+	filename := fmt.Sprintf("%s-%s.tar.gz", name, backup)
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.Copy(w, stream)
+}
+
+func (a *API) addIncusProxy(w http.ResponseWriter, r *http.Request) {
+	if !requireCSRF(w, r) {
+		return
+	}
+	if _, ok := queryValues(w, r); !ok {
+		return
+	}
+	name := r.PathValue("name")
+	if !incus.ValidInstanceName(name) {
+		invalidParams(w, "Invalid instance name")
+		return
+	}
+	var body incus.ProxyDevice
+	if !decodeJSONBody(w, r, &body) {
+		return
+	}
+	if !incus.ValidDeviceName(body.Name) {
+		invalidParams(w, "Invalid proxy device name")
+		return
+	}
+	if !incus.ValidProxyAddr(body.Listen) || !incus.ValidProxyAddr(body.Connect) {
+		invalidParams(w, "listen and connect must follow proto:host:port (e.g. tcp:0.0.0.0:8080)")
+		return
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		invalidParams(w, "Invalid proxy payload")
+		return
+	}
+	a.executeControl(w, r, ctl.Request{
+		Action:  "incus.proxy.add",
+		Target:  name,
+		Payload: payload,
+	}, "incus:"+name+"/proxy:"+body.Name)
+}
+
+func (a *API) removeIncusProxy(w http.ResponseWriter, r *http.Request) {
+	if !requireCSRF(w, r) {
+		return
+	}
+	if _, ok := queryValues(w, r); !ok {
+		return
+	}
+	name := r.PathValue("name")
+	device := r.PathValue("device")
+	if !incus.ValidInstanceName(name) || !incus.ValidDeviceName(device) {
+		invalidParams(w, "Invalid instance or proxy device name")
+		return
+	}
+	a.executeControl(w, r, ctl.Request{
+		Action: "incus.proxy.remove",
+		Target: name,
+		Signal: device,
+	}, "incus:"+name+"/proxy:"+device)
 }

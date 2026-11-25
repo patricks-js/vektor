@@ -69,7 +69,7 @@ func (a *API) host(w http.ResponseWriter, r *http.Request) {
 
 func validKind(kind string) bool {
 	switch kind {
-	case "", host.KindHost, host.KindCPUCore, host.KindDisk, host.KindFilesystem, host.KindNIC, host.KindSensor:
+	case "", host.KindHost, host.KindCPUCore, host.KindDisk, host.KindFilesystem, host.KindNIC, host.KindSensor, host.KindIncusInstance:
 		return true
 	}
 	return false

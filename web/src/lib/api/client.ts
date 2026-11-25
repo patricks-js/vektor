@@ -133,6 +133,12 @@ export type AuditEntry = {
 
 export type ServiceAction = 'start' | 'stop' | 'restart' | 'reload' | 'enable' | 'disable'
 
+export type IncusProxyDevice = {
+  name: string
+  listen: string
+  connect: string
+}
+
 export type IncusStatus = {
   available: boolean
   reason?: string
@@ -140,15 +146,18 @@ export type IncusStatus = {
   kernel_version?: string
   drivers?: string[]
   storage_drivers?: string[]
+  oci_supported: boolean
   instance_count: number
   running_count: number
   vm_count: number
   container_count: number
+  oci_count: number
 }
 
 export type IncusInstance = {
   name: string
   type: 'container' | 'virtual-machine'
+  oci: boolean
   status: string
   description?: string
   architecture?: string
@@ -160,6 +169,8 @@ export type IncusInstance = {
   cpu_limit?: string
   memory_limit?: string
   autostart: boolean
+  env?: Record<string, string>
+  proxies?: IncusProxyDevice[]
   cpu_usage_ns: number
   memory_usage_bytes: number
   memory_peak_bytes: number
@@ -214,11 +225,15 @@ export type IncusResources = {
 export type IncusCreateInstanceInput = {
   name: string
   type: 'container' | 'virtual-machine'
+  protocol?: 'simplestreams' | 'oci'
+  server?: string
   image: string
   description?: string
   cpu_limit?: string
   memory_limit?: string
   profiles?: string[]
+  env?: Record<string, string>
+  proxies?: IncusProxyDevice[]
   start: boolean
 }
 
@@ -229,6 +244,8 @@ export type IncusUpdateInstanceInput = {
   cpu_limit?: string
   memory_limit?: string
   autostart?: boolean
+  env?: Record<string, string>
+  unset_env?: string[]
 }
 
 export type IncusExecResult = {
@@ -482,6 +499,17 @@ export function createApi(onUnauthorized?: () => void) {
       }),
     incusDeleteBackup: (session: Session, name: string, backupName: string, signal?: AbortSignal) =>
       request<{ ok: boolean; message?: string }>(`/api/v1/incus/instances/${encodeURIComponent(name)}/backups/${encodeURIComponent(backupName)}`, {
+        method: 'DELETE', signal, headers: { 'X-CSRF-Token': session.csrf_token },
+      }),
+    incusBackupExportUrl: (name: string, backupName: string) =>
+      `/api/v1/incus/instances/${encodeURIComponent(name)}/backups/${encodeURIComponent(backupName)}/export`,
+    incusAddProxy: (session: Session, name: string, proxy: IncusProxyDevice, signal?: AbortSignal) =>
+      request<{ ok: boolean; message?: string }>(`/api/v1/incus/instances/${encodeURIComponent(name)}/proxies`, {
+        method: 'POST', signal, body: JSON.stringify(proxy),
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': session.csrf_token },
+      }),
+    incusRemoveProxy: (session: Session, name: string, deviceName: string, signal?: AbortSignal) =>
+      request<{ ok: boolean; message?: string }>(`/api/v1/incus/instances/${encodeURIComponent(name)}/proxies/${encodeURIComponent(deviceName)}`, {
         method: 'DELETE', signal, headers: { 'X-CSRF-Token': session.csrf_token },
       }),
   }

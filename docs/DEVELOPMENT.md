@@ -128,8 +128,10 @@ As releases são automatizadas via GitHub Actions (`.github/workflows/release.ym
 
 - **Fase 1 (`v0.4.x`) — Concluída:** Monitoramento nativo do host (CPU, RAM, disco, rede, sensores), histórico multi-resolução SQLite, alertas/webhooks, UI Beszel-style, checker de updates e `.deb` + CI/CD.
 - **Fase 2 (`v0.6.x`) — Concluída:** Host Management (processos, serviços `systemd`, logs `journald`), helper isolado `vektor-ctl.socket`, ações controladas e auditoria em SQLite.
-- **Fase 3 (`v0.7.x`) — Concluída (em refinamento):** Virtualização e System Containers via **Incus** (ciclo de vida, criação, snapshots, storage pools e redes).
-- **Próximas fases (planejadas):**
-  - **Fase 4:** Console/terminal interativo para instâncias Incus, métricas históricas por instância e gestão avançada de storage/backups.
-  - **Fase 5:** Containers OCI/Docker (ou OCI nativo no Incus) e automações operacionais.
-  - **Backlog técnico:** worker assíncrono para webhooks de alerta (`internal/alerts/evaluator.go`), sincronização completa do `docs/openapi-v1.yaml` com rotas v0.4–v0.7 e ordenação determinística do header `Allow`.
+- **Fase 3 (`v0.7.x`) — Concluída:** Virtualização e System Containers via **Incus** (ciclo de vida, criação, snapshots, storage pools e redes).
+- **Fase 4 (`v0.8.x`) — Concluída:** Operações avançadas do Incus (terminal de comandos, console de boot, editor de recursos ao vivo, backups compactados, `vektor-ctl` concorrente) e motor de diagnóstico acionável (`vektord doctor` + drawer global com logs inline).
+- **Fase 5 (`v0.9.x`) — Concluída:** Containers de aplicação **OCI nativos no Incus** (Docker Hub/GHCR), Port Forwarding (`proxy` devices), variáveis de ambiente, download streaming de backups (`.tar.gz`), métricas históricas por instância no SQLite, worker assíncrono de webhooks e OpenAPI sincronizado.
+- **Rumo à `v1.0.0` (planejado):**
+  - Storage Volumes customizados no Incus (criar/anexar volumes persistentes a containers/VMs).
+  - Console PTY interativo completo (WebSocket) opcional para programas interativos.
+  - Auditoria final de segurança, performance e cobertura E2E de estabilização `v1.0.0`.

@@ -69,6 +69,11 @@ const (
 	KeyNetTxDropsPerSec   = "net.tx_drops_per_sec"
 
 	KeySensorTemperatureCelsius = "sensor.temperature_celsius"
+
+	KeyIncusCPUPct      = "incus.cpu_pct"
+	KeyIncusMemoryBytes = "incus.memory_bytes"
+	KeyIncusDiskBytes   = "incus.disk_bytes"
+	KeyIncusProcesses   = "incus.processes"
 )
 
 // MetricDef defines a canonical metric entry in the central catalog.
@@ -127,6 +132,11 @@ var catalogList = []MetricDef{
 	{Key: KeyNetTxDropsPerSec, Unit: "drops/s", ResourceKinds: []string{"nic"}, Modality: ModalityRate, Enabled: true, Aggregators: defaultAggregators},
 
 	{Key: KeySensorTemperatureCelsius, Unit: "°C", ResourceKinds: []string{"sensor"}, Modality: ModalityGauge, Enabled: true, Aggregators: defaultAggregators},
+
+	{Key: KeyIncusCPUPct, Unit: "%", ResourceKinds: []string{"incus_instance"}, Modality: ModalityGauge, Enabled: true, Aggregators: defaultAggregators},
+	{Key: KeyIncusMemoryBytes, Unit: "bytes", ResourceKinds: []string{"incus_instance"}, Modality: ModalityGauge, Enabled: true, Aggregators: defaultAggregators},
+	{Key: KeyIncusDiskBytes, Unit: "bytes", ResourceKinds: []string{"incus_instance"}, Modality: ModalityGauge, Enabled: true, Aggregators: defaultAggregators},
+	{Key: KeyIncusProcesses, Unit: "count", ResourceKinds: []string{"incus_instance"}, Modality: ModalityGauge, Enabled: true, Aggregators: defaultAggregators},
 }
 
 var catalogMap = func() map[string]MetricDef {

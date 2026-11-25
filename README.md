@@ -10,7 +10,7 @@ Lightweight, native-first Linux host monitoring, operations, and **Incus** virtu
 
 - **Host Monitoring (Phase 1):** Direct Linux telemetry from `/proc`, `/sys`, and `statfs` with monotonic-clock rate derivation, multi-resolution SQLite WAL history (`30s` raw, `5m` medium, `1h` long), sensor temperatures, threshold alerts with webhooks, UTC/Local timezone toggle, and GitHub Releases update checker.
 - **Host Management (Phase 2):** Live process explorer (`/proc`), `systemd` service status and `journald` log viewer, controlled actions (`start`/`stop`/`restart`/`reload`/`enable`/`disable`, process signals, reboot/poweroff) through `vektor-ctl.socket`, and persistent SQLite audit trail (`audit_log`).
-- **Incus VMs & System Containers (Phase 3):** Pure Go stdlib Unix-socket integration with Incus REST API 1.0 (`/var/lib/incus/unix.socket`) via `vektor-ctl.socket` — create and manage LXC system containers and KVM/QEMU virtual machines, snapshots (create/restore/delete), storage pools, and networks without adding `vektord` to `incus-admin`.
+- **Incus VMs, System Containers & OCI Apps (Phases 3–5):** Pure Go stdlib Unix-socket integration with Incus REST API 1.0 (`/var/lib/incus/unix.socket`) via `vektor-ctl.socket` — create and manage LXC system containers, native OCI application containers (Docker Hub / GHCR), and KVM/QEMU virtual machines; live resource & env editor; port forwarding (`proxy` devices); command terminal & console logs; snapshots; compressed backups with zero-copy `.tar.gz` streaming download; and multi-resolution SQLite historical metrics per instance (`incus_instance`).
 - **Privilege Separation ([ADR-006](docs/adr/ADR-006-privilege-separation-and-host-management.md)):** `vektord` runs permanently unprivileged (`vektor` user, strict `systemd` hardening); privileged operations go through an allowlisted Unix socket authenticated via kernel `SO_PEERCRED`.
 
 ## Quick start (from source)
@@ -62,7 +62,7 @@ bun run --cwd web dev
 
 ## Documentation
 
-- [Changelog](CHANGELOG.md) — release history (`v0.1.0` → `v0.7.1`)
+- [Changelog](CHANGELOG.md) — release history (`v0.1.0` → `v0.9.0`)
 - [Development, Versioning & Distribution Guide](docs/DEVELOPMENT.md) — workflow, SemVer, CI/CD, and release checklist
 - [API and operations guide](docs/API_V0.2.md) · [OpenAPI](docs/openapi-v1.yaml) · [Design system catalog](docs/WEB_DESIGN_SYSTEM.md)
 - **Architecture Decision Records:**

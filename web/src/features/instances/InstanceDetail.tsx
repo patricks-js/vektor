@@ -1,16 +1,20 @@
 import * as stylex from '@stylexjs/stylex'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Archive, ArrowLeft, Camera, Cpu, HardDrive, Monitor, Pause, Play, Power, RefreshCw, RotateCw, Settings2, Terminal, Trash2 } from 'lucide-react'
+import { Activity, Archive, ArrowLeft, Camera, Cpu, Download, HardDrive, Monitor, Network, Pause, Play, Plus, Power, RefreshCw, RotateCw, Settings2, Terminal, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { Facts } from '../../components/ui/dashboard'
-import { Badge, Button, Empty, ErrorState, Loading, Modal, Panel, StatusDot, TextField, layout, tableStyles } from '../../components/ui/ui'
+import { Badge, Button, Empty, ErrorState, Loading, Modal, Panel, SelectField, StatusDot, TextField, layout, tableStyles } from '../../components/ui/ui'
 import { useSession } from '../auth/session'
+import { ChartPanel } from '../metrics/ChartPanel'
+import { metric } from '../metrics/catalog'
+import { ChartCursorProvider } from '../metrics/cursor'
 import { dateTime, formatValue } from '../metrics/format'
+import { TimeRangeSelector } from '../metrics/range'
 import type { IncusStateAction } from '../../lib/api/client'
 import { useApi } from '../../lib/api/queries'
 
-type DetailTab = 'overview' | 'terminal' | 'snapshots' | 'backups'
+type DetailTab = 'overview' | 'metrics' | 'network' | 'terminal' | 'snapshots' | 'backups'
 
 type TerminalEntry = {
   id: number
@@ -22,6 +26,8 @@ type TerminalEntry = {
 }
 
 const QUICK_COMMANDS = ['uptime', 'free -h', 'df -h', 'ip -br a', 'uname -a']
+const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/
+const DEVICE_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/
 
 const s = stylex.create({
   backLink: {
@@ -34,6 +40,9 @@ const s = stylex.create({
     paddingBlock: 3, paddingInline: 8, borderRadius: 'var(--vk-radius-1)',
     backgroundColor: 'var(--vk-surface-2)', borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--vk-border-subtle)',
     color: 'var(--vk-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.03em',
+  },
+  typePillOCI: {
+    color: 'var(--vk-info)', borderColor: 'var(--vk-info)',
   },
   tabs: { display: 'flex', flexWrap: 'wrap', gap: 6 },
   tab: {
@@ -55,6 +64,10 @@ const s = stylex.create({
   formGrid: {
     display: 'grid', gap: 12,
     gridTemplateColumns: { default: 'minmax(0, 1fr)', '@media (min-width: 720px)': 'repeat(3, minmax(0, 1fr))' },
+  },
+  proxyGrid: {
+    display: 'grid', gap: 10, alignItems: 'end',
+    gridTemplateColumns: { default: 'minmax(0, 1fr)', '@media (min-width: 900px)': '1.2fr 0.7fr 1.1fr 0.9fr 0.9fr auto' },
   },
   unitSelect: {
     minHeight: { default: 38, '@media (pointer: coarse)': 44 }, paddingBlock: 7, paddingInline: 10,
@@ -90,6 +103,13 @@ const s = stylex.create({
     margin: 0, padding: 12, borderRadius: 'var(--vk-radius-2)', backgroundColor: '#0a0a0d', color: '#d4d4d8',
     fontFamily: 'var(--vk-mono)', fontSize: 12, lineHeight: '18px', maxHeight: 280, overflowY: 'auto',
     whiteSpace: 'pre-wrap', overflowWrap: 'anywhere',
+  },
+  downloadLink: {
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, paddingInline: 12,
+    minHeight: { default: 36, '@media (pointer: coarse)': 44 }, borderWidth: 1, borderStyle: 'solid',
+    borderColor: 'var(--vk-border-control)', borderRadius: 'var(--vk-radius-2)',
+    backgroundColor: { default: 'var(--vk-surface-1)', ':hover': 'var(--vk-surface-3)' },
+    color: 'var(--vk-text-primary)', fontSize: 13, fontWeight: 500, textDecoration: 'none',
   },
 })
 
@@ -147,6 +167,17 @@ export function InstanceDetail() {
   const [editDesc, setEditDesc] = useState('')
   const [editAutostart, setEditAutostart] = useState(false)
 
+  // Proxy form state
+  const [proxyName, setProxyName] = useState('')
+  const [proxyProto, setProxyProto] = useState<'tcp' | 'udp'>('tcp')
+  const [proxyBind, setProxyBind] = useState<'0.0.0.0' | '127.0.0.1'>('0.0.0.0')
+  const [proxyHostPort, setProxyHostPort] = useState('')
+  const [proxyInstPort, setProxyInstPort] = useState('')
+
+  // Env form state
+  const [envKey, setEnvKey] = useState('')
+  const [envVal, setEnvVal] = useState('')
+
   // Terminal state
   const [cmdInput, setCmdInput] = useState('')
   const [termEntries, setTermEntries] = useState<TerminalEntry[]>([])
@@ -202,6 +233,43 @@ export function InstanceDetail() {
       void queryClient.invalidateQueries({ queryKey: ['incus'] })
     },
     onError: (err) => setFeedback({ tone: 'critical', text: err instanceof Error ? err.message : 'Falha ao atualizar configuração.' }),
+  })
+
+  const envSaveMutation = useMutation({
+    mutationFn: (payload: { env?: Record<string, string>; unset_env?: string[] }) =>
+      api.incusUpdateInstance(session, name, payload),
+    onSuccess: () => {
+      setEnvKey('')
+      setEnvVal('')
+      setFeedback({ tone: 'success', text: 'Variáveis de ambiente atualizadas.' })
+      void queryClient.invalidateQueries({ queryKey: ['incus', 'instance', name] })
+    },
+    onError: (err) => setFeedback({ tone: 'critical', text: err instanceof Error ? err.message : 'Falha ao atualizar variável.' }),
+  })
+
+  const addProxyMutation = useMutation({
+    mutationFn: () => api.incusAddProxy(session, name, {
+      name: proxyName.trim() || `port-${proxyHostPort.trim()}`,
+      listen: `${proxyProto}:${proxyBind}:${proxyHostPort.trim()}`,
+      connect: `${proxyProto}:127.0.0.1:${proxyInstPort.trim()}`,
+    }),
+    onSuccess: (res) => {
+      setProxyName('')
+      setProxyHostPort('')
+      setProxyInstPort('')
+      setFeedback({ tone: 'success', text: res.message || 'Encaminhamento de porta adicionado.' })
+      void queryClient.invalidateQueries({ queryKey: ['incus', 'instance', name] })
+    },
+    onError: (err) => setFeedback({ tone: 'critical', text: err instanceof Error ? err.message : 'Falha ao adicionar porta.' }),
+  })
+
+  const removeProxyMutation = useMutation({
+    mutationFn: (device: string) => api.incusRemoveProxy(session, name, device),
+    onSuccess: (res) => {
+      setFeedback({ tone: 'success', text: res.message || 'Porta removida.' })
+      void queryClient.invalidateQueries({ queryKey: ['incus', 'instance', name] })
+    },
+    onError: (err) => setFeedback({ tone: 'critical', text: err instanceof Error ? err.message : 'Falha ao remover porta.' }),
   })
 
   const execMutation = useMutation({
@@ -285,6 +353,18 @@ export function InstanceDetail() {
   const ramPercent = inst && ramLimitBytes && ramLimitBytes > 0
     ? Math.min(100, Math.round((inst.memory_usage_bytes / ramLimitBytes) * 100))
     : null
+  const resourceId = `incus:${name}`
+
+  const hpNum = Number(proxyHostPort.trim())
+  const ipNum = Number(proxyInstPort.trim())
+  const proxyNameTrim = proxyName.trim()
+  const proxyValid = (!proxyNameTrim || DEVICE_NAME_RE.test(proxyNameTrim))
+    && Number.isInteger(hpNum) && hpNum >= 1 && hpNum <= 65535
+    && Number.isInteger(ipNum) && ipNum >= 1 && ipNum <= 65535
+
+  const envKeyValid = ENV_KEY_RE.test(envKey.trim())
+  const envEntries = Object.entries(inst?.env ?? {}).sort(([a], [b]) => a.localeCompare(b))
+  const proxies = inst?.proxies ?? []
 
   const startEdit = () => {
     if (!inst) return
@@ -321,9 +401,9 @@ export function InstanceDetail() {
             <div {...stylex.props(layout.compact)}>
               <div {...stylex.props(layout.row)}>
                 <h1 tabIndex={-1} {...stylex.props(layout.pageTitle)}>{inst.name}</h1>
-                <span {...stylex.props(s.typePill)}>
+                <span {...stylex.props(s.typePill, inst.oci && s.typePillOCI)}>
                   {inst.type === 'virtual-machine' ? <Monitor size={12} aria-hidden /> : <Cpu size={12} aria-hidden />}
-                  {inst.type === 'virtual-machine' ? 'VM' : 'Container'}
+                  {inst.type === 'virtual-machine' ? 'VM' : inst.oci ? 'App OCI' : 'Container'}
                 </span>
                 <Badge tone={statusTone(inst.status)} icon={<StatusDot tone={statusTone(inst.status)} />}>
                   {inst.status}
@@ -368,6 +448,14 @@ export function InstanceDetail() {
             <button type="button" role="tab" aria-selected={tab === 'overview'}
               {...stylex.props(s.tab, tab === 'overview' && s.tabActive)} onClick={() => setTab('overview')}>
               <Settings2 size={14} aria-hidden /> Visão Geral
+            </button>
+            <button type="button" role="tab" aria-selected={tab === 'metrics'}
+              {...stylex.props(s.tab, tab === 'metrics' && s.tabActive)} onClick={() => setTab('metrics')}>
+              <Activity size={14} aria-hidden /> Métricas
+            </button>
+            <button type="button" role="tab" aria-selected={tab === 'network'}
+              {...stylex.props(s.tab, tab === 'network' && s.tabActive)} onClick={() => setTab('network')}>
+              <Network size={14} aria-hidden /> Portas & Env ({proxies.length})
             </button>
             <button type="button" role="tab" aria-selected={tab === 'terminal'}
               {...stylex.props(s.tab, tab === 'terminal' && s.tabActive)} onClick={() => setTab('terminal')}>
@@ -427,6 +515,7 @@ export function InstanceDetail() {
                   <Facts items={[
                     ['IPv4', inst.ipv4.length > 0 ? inst.ipv4.join(', ') : '—'],
                     ['IPv6', inst.ipv6.length > 0 ? inst.ipv6.join(', ') : '—'],
+                    ['Portas expostas', proxies.length > 0 ? proxies.map(p => `${p.listen} → ${p.connect}`).join(', ') : 'Nenhuma'],
                     ['Perfis', inst.profiles.join(', ') || 'default'],
                     ['Arquitetura', inst.architecture || '—'],
                     ['Criada em', inst.created_at ? dateTime(inst.created_at) : '—'],
@@ -487,6 +576,127 @@ export function InstanceDetail() {
                 </Panel>
               )}
             </>
+          )}
+
+          {tab === 'metrics' && (
+            <div {...stylex.props(layout.stack)}>
+              <div {...stylex.props(layout.split)}>
+                <p {...stylex.props(layout.small)}>
+                  Histórico persistido no SQLite multi-resolução para <code>{resourceId}</code>
+                </p>
+                <TimeRangeSelector />
+              </div>
+              <ChartCursorProvider>
+                <div {...stylex.props(layout.grid2)}>
+                  <ChartPanel title="CPU da instância" subtitle="Uso percentual derivado do tempo de CPU" resourceId={resourceId} metric={metric.incusCpu} color="cpu" />
+                  <ChartPanel title="Memória RAM" subtitle="Consumo residente da instância" resourceId={resourceId} metric={metric.incusMemory} color="memory" />
+                  <ChartPanel title="Uso de Disco (root)" subtitle="Espaço alocado no volume raiz" resourceId={resourceId} metric={metric.incusDisk} color="storage" />
+                  <ChartPanel title="Processos ativos" subtitle="Contagem de processos em execução" resourceId={resourceId} metric={metric.incusProcesses} color="rx" />
+                </div>
+              </ChartCursorProvider>
+            </div>
+          )}
+
+          {tab === 'network' && (
+            <div {...stylex.props(layout.stack)}>
+              <Panel title="Encaminhamento de Portas (Proxy Devices)" subtitle="Expõe portas da instância diretamente no host sem editar YAML">
+                <form {...stylex.props(s.proxyGrid)} onSubmit={e => { e.preventDefault(); if (proxyValid) addProxyMutation.mutate() }}>
+                  <TextField label="Nome (opcional)" value={proxyName} onChange={e => setProxyName(e.target.value)} placeholder="ex: http" />
+                  <SelectField label="Proto" value={proxyProto} onChange={e => setProxyProto(e.target.value as 'tcp' | 'udp')}>
+                    <option value="tcp">TCP</option>
+                    <option value="udp">UDP</option>
+                  </SelectField>
+                  <SelectField label="Escuta no host" value={proxyBind} onChange={e => setProxyBind(e.target.value as '0.0.0.0' | '127.0.0.1')}>
+                    <option value="0.0.0.0">0.0.0.0 (Todas interfaces)</option>
+                    <option value="127.0.0.1">127.0.0.1 (Apenas local)</option>
+                  </SelectField>
+                  <TextField label="Porta Host" type="number" inputMode="numeric" min={1} max={65535}
+                    value={proxyHostPort} onChange={e => setProxyHostPort(e.target.value.replace(/[^0-9]/g, ''))} placeholder="8080" />
+                  <TextField label="Porta Instância" type="number" inputMode="numeric" min={1} max={65535}
+                    value={proxyInstPort} onChange={e => setProxyInstPort(e.target.value.replace(/[^0-9]/g, ''))} placeholder="80" />
+                  <Button type="submit" variant="primary" busy={addProxyMutation.isPending} disabled={!proxyValid}>
+                    <Plus size={14} aria-hidden /> Adicionar
+                  </Button>
+                </form>
+
+                {proxies.length === 0 ? (
+                  <Empty>Nenhum encaminhamento de porta configurado para esta instância.</Empty>
+                ) : (
+                  <div {...stylex.props(tableStyles.scroll)}>
+                    <table {...stylex.props(tableStyles.table)}>
+                      <thead>
+                        <tr>
+                          <th {...stylex.props(tableStyles.th)}>Device</th>
+                          <th {...stylex.props(tableStyles.th)}>Host (Listen)</th>
+                          <th {...stylex.props(tableStyles.th)}>Instância (Connect)</th>
+                          <th {...stylex.props(tableStyles.th)}>Ações</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {proxies.map(p => (
+                          <tr key={p.name} {...stylex.props(tableStyles.row)}>
+                            <td {...stylex.props(tableStyles.td, s.monoCell)}>{p.name}</td>
+                            <td {...stylex.props(tableStyles.td, s.monoCell)}>{p.listen}</td>
+                            <td {...stylex.props(tableStyles.td, s.monoCell)}>{p.connect}</td>
+                            <td {...stylex.props(tableStyles.td)}>
+                              <Button variant="danger" disabled={removeProxyMutation.isPending}
+                                aria-label={`Remover porta ${p.name}`}
+                                onClick={() => removeProxyMutation.mutate(p.name)}>
+                                <Trash2 size={13} aria-hidden />
+                              </Button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </Panel>
+
+              <Panel title="Variáveis de Ambiente" subtitle="Configuração environment.* (útil especialmente para containers OCI)">
+                <form {...stylex.props(s.snapForm)} onSubmit={e => {
+                  e.preventDefault()
+                  if (envKeyValid) envSaveMutation.mutate({ env: { [envKey.trim()]: envVal } })
+                }}>
+                  <TextField label="Chave" value={envKey} onChange={e => setEnvKey(e.target.value)} placeholder="ex: TZ" />
+                  <TextField label="Valor" value={envVal} onChange={e => setEnvVal(e.target.value)} placeholder="ex: America/Sao_Paulo" />
+                  <Button type="submit" variant="primary" busy={envSaveMutation.isPending} disabled={!envKeyValid}>
+                    <Plus size={14} aria-hidden /> Salvar variável
+                  </Button>
+                </form>
+
+                {envEntries.length === 0 ? (
+                  <Empty>Nenhuma variável de ambiente personalizada definida.</Empty>
+                ) : (
+                  <div {...stylex.props(tableStyles.scroll)}>
+                    <table {...stylex.props(tableStyles.table)}>
+                      <thead>
+                        <tr>
+                          <th {...stylex.props(tableStyles.th)}>Chave</th>
+                          <th {...stylex.props(tableStyles.th)}>Valor</th>
+                          <th {...stylex.props(tableStyles.th)}>Ações</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {envEntries.map(([k, v]) => (
+                          <tr key={k} {...stylex.props(tableStyles.row)}>
+                            <td {...stylex.props(tableStyles.td, s.monoCell)}>{k}</td>
+                            <td {...stylex.props(tableStyles.td, s.monoCell)}>{v}</td>
+                            <td {...stylex.props(tableStyles.td)}>
+                              <Button variant="danger" disabled={envSaveMutation.isPending}
+                                aria-label={`Remover variável ${k}`}
+                                onClick={() => envSaveMutation.mutate({ unset_env: [k] })}>
+                                <Trash2 size={13} aria-hidden />
+                              </Button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </Panel>
+            </div>
           )}
 
           {tab === 'terminal' && (
@@ -646,7 +856,7 @@ export function InstanceDetail() {
           {tab === 'backups' && (
             <Panel
               title="Backups compactados"
-              subtitle="Arquivos de backup nativos gerenciados pelo Incus"
+              subtitle="Arquivos de backup nativos gerenciados pelo Incus com download direto via streaming"
               action={
                 <form {...stylex.props(s.snapForm)} onSubmit={event => {
                   event.preventDefault()
@@ -686,11 +896,20 @@ export function InstanceDetail() {
                           <td {...stylex.props(tableStyles.td)}>{b.created_at ? dateTime(b.created_at) : '—'}</td>
                           <td {...stylex.props(tableStyles.td)}>{b.instance_only ? 'Somente instância' : 'Instância + snapshots'}</td>
                           <td {...stylex.props(tableStyles.td)}>
-                            <Button variant="danger" disabled={deleteBackupMutation.isPending}
-                              aria-label={`Excluir backup ${b.name}`}
-                              onClick={() => setConfirmDeleteBackup(b.name)}>
-                              <Trash2 size={13} aria-hidden />
-                            </Button>
+                            <div {...stylex.props(layout.row)}>
+                              <a
+                                href={api.incusBackupExportUrl(name, b.name)}
+                                download={`${name}-${b.name}.tar.gz`}
+                                {...stylex.props(s.downloadLink)}
+                              >
+                                <Download size={13} aria-hidden /> Baixar
+                              </a>
+                              <Button variant="danger" disabled={deleteBackupMutation.isPending}
+                                aria-label={`Excluir backup ${b.name}`}
+                                onClick={() => setConfirmDeleteBackup(b.name)}>
+                                <Trash2 size={13} aria-hidden />
+                              </Button>
+                            </div>
                           </td>
                         </tr>
                       ))}

@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: Vektor HTTP API
-  version: 1.0.0
-  description: API do Vektor v0.2. Consulte docs/API_V0.2.md para operação e exemplos com curl.
+  version: 0.9.0
+  description: API HTTP autenticada do Vektor (Monitoramento, Alertas, Diagnóstico, Host Management e Incus VMs/Containers/OCI).
 servers:
   - url: http://127.0.0.1:8080
     description: Endereço padrão para desenvolvimento local
@@ -11,6 +11,12 @@ tags:
     description: Inventário, histórico, diagnóstico e streaming
   - name: Authentication
     description: Login, consulta e revogação de sessões
+  - name: Alerts
+    description: Regras de alerta, canais webhook e histórico de eventos
+  - name: HostManagement
+    description: Processos, serviços systemd, logs journald, energia do host e auditoria
+  - name: Incus
+    description: Gerenciamento de VMs, system containers, containers OCI, snapshots, backups e proxy devices via vektor-ctl.socket
 security:
   - sessionCookie: []
 paths:
@@ -299,6 +305,322 @@ paths:
         '429': { $ref: '#/components/responses/Limited' }
         '500': { $ref: '#/components/responses/Internal' }
         '503': { $ref: '#/components/responses/Unavailable' }
+  /api/v1/diagnostics:
+    get:
+      tags: [Monitoring]
+      operationId: getDiagnostics
+      summary: Executa verificações acionáveis do host, relógio, DNS, SQLite, vektor-ctl e Incus
+      responses:
+        '200': { description: Relatório de diagnóstico }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+  /api/v1/update:
+    get:
+      tags: [Monitoring]
+      operationId: checkUpdate
+      summary: Consulta a última release disponível no GitHub Releases
+      responses:
+        '200': { description: Estado de versão atual vs última release }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+  /api/v1/alerts/rules:
+    get:
+      tags: [Alerts]
+      operationId: listAlertRules
+      summary: Lista regras de alerta configuradas
+      responses:
+        '200': { description: Lista de regras }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+    post:
+      tags: [Alerts]
+      operationId: createAlertRule
+      summary: Cria uma nova regra de alerta
+      responses:
+        '201': { description: Regra criada }
+        '400': { $ref: '#/components/responses/Invalid' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+  /api/v1/alerts/rules/{id}:
+    put:
+      tags: [Alerts]
+      operationId: updateAlertRule
+      summary: Atualiza uma regra de alerta existente
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      responses:
+        '200': { description: Regra atualizada }
+    delete:
+      tags: [Alerts]
+      operationId: deleteAlertRule
+      summary: Remove uma regra de alerta
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      responses:
+        '200': { description: Regra removida }
+  /api/v1/alerts/channels:
+    get:
+      tags: [Alerts]
+      operationId: listAlertChannels
+      summary: Lista canais webhook de notificação
+      responses:
+        '200': { description: Lista de canais }
+    post:
+      tags: [Alerts]
+      operationId: createAlertChannel
+      summary: Cria um novo canal webhook
+      responses:
+        '201': { description: Canal criado }
+  /api/v1/alerts/channels/{id}:
+    delete:
+      tags: [Alerts]
+      operationId: deleteAlertChannel
+      summary: Remove um canal webhook
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      responses:
+        '200': { description: Canal removido }
+  /api/v1/alerts/channels/test:
+    post:
+      tags: [Alerts]
+      operationId: testAlertChannel
+      summary: Envia uma notificação de teste para um webhook
+      responses:
+        '200': { description: Teste enviado }
+  /api/v1/alerts/events:
+    get:
+      tags: [Alerts]
+      operationId: listAlertEvents
+      summary: Lista eventos recentes de disparo e resolução de alertas
+      responses:
+        '200': { description: Histórico de eventos }
+  /api/v1/processes:
+    get:
+      tags: [HostManagement]
+      operationId: listProcesses
+      summary: Lista processos ativos via /proc ordenados por CPU ou memória
+      responses:
+        '200': { description: Lista de processos }
+  /api/v1/processes/{pid}/signal:
+    post:
+      tags: [HostManagement]
+      operationId: signalProcess
+      summary: Envia sinal TERM ou KILL a um processo via vektor-ctl.socket
+      parameters:
+        - { in: path, name: pid, required: true, schema: { type: integer } }
+      responses:
+        '200': { description: Sinal enviado }
+  /api/v1/services:
+    get:
+      tags: [HostManagement]
+      operationId: listServices
+      summary: Lista serviços systemd do host
+      responses:
+        '200': { description: Lista de serviços }
+  /api/v1/services/{name}/logs:
+    get:
+      tags: [HostManagement]
+      operationId: getServiceLogs
+      summary: Consulta logs recentes de um serviço via journalctl
+      parameters:
+        - { in: path, name: name, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Entradas de log }
+  /api/v1/services/{name}/action:
+    post:
+      tags: [HostManagement]
+      operationId: serviceAction
+      summary: Executa ação controlada (start/stop/restart/reload/enable/disable) em serviço systemd
+      parameters:
+        - { in: path, name: name, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Ação executada }
+  /api/v1/host/power:
+    post:
+      tags: [HostManagement]
+      operationId: hostPower
+      summary: Solicita reboot ou poweroff do host via vektor-ctl.socket
+      responses:
+        '200': { description: Ação iniciada }
+  /api/v1/audit:
+    get:
+      tags: [HostManagement]
+      operationId: listAuditLog
+      summary: Lista entradas recentes da trilha de auditoria no SQLite
+      responses:
+        '200': { description: Entradas de auditoria }
+  /api/v1/incus/status:
+    get:
+      tags: [Incus]
+      operationId: getIncusStatus
+      summary: Consulta disponibilidade, versão, drivers e suporte OCI do Incus
+      responses:
+        '200': { description: Estado do Incus }
+  /api/v1/incus/resources:
+    get:
+      tags: [Incus]
+      operationId: listIncusResources
+      summary: Lista storage pools, redes e perfis do Incus
+      responses:
+        '200': { description: Recursos do Incus }
+  /api/v1/incus/instances:
+    get:
+      tags: [Incus]
+      operationId: listIncusInstances
+      summary: Lista containers (LXC/OCI) e máquinas virtuais do Incus
+      responses:
+        '200': { description: Lista de instâncias }
+    post:
+      tags: [Incus]
+      operationId: createIncusInstance
+      summary: Cria um System Container, App Container (OCI) ou VM no Incus
+      responses:
+        '200': { description: Instância criada }
+  /api/v1/incus/instances/{name}:
+    get:
+      tags: [Incus]
+      operationId: getIncusInstance
+      summary: Obtém detalhes, proxies, env e estado atual de uma instância
+      parameters:
+        - { in: path, name: name, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Detalhes da instância }
+    patch:
+      tags: [Incus]
+      operationId: updateIncusInstance
+      summary: Atualiza limites de CPU/RAM, descrição, autostart e variáveis de ambiente
+      parameters:
+        - { in: path, name: name, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Instância atualizada }
+    delete:
+      tags: [Incus]
+      operationId: deleteIncusInstance
+      summary: Remove permanentemente uma instância parada
+      parameters:
+        - { in: path, name: name, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Instância removida }
+  /api/v1/incus/instances/{name}/state:
+    post:
+      tags: [Incus]
+      operationId: changeIncusInstanceState
+      summary: Altera estado da instância (start, stop, force_stop, restart, freeze, unfreeze)
+      parameters:
+        - { in: path, name: name, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Estado alterado }
+  /api/v1/incus/instances/{name}/exec:
+    post:
+      tags: [Incus]
+      operationId: execIncusInstance
+      summary: Executa comando na instância via Incus API com captura de stdout/stderr
+      parameters:
+        - { in: path, name: name, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Resultado da execução }
+  /api/v1/incus/instances/{name}/console:
+    get:
+      tags: [Incus]
+      operationId: getIncusConsoleLog
+      summary: Lê o buffer de log do console de boot da instância
+      parameters:
+        - { in: path, name: name, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Log de console }
+  /api/v1/incus/instances/{name}/proxies:
+    post:
+      tags: [Incus]
+      operationId: addIncusProxy
+      summary: Adiciona encaminhamento de porta (proxy device) na instância
+      parameters:
+        - { in: path, name: name, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Proxy adicionado }
+  /api/v1/incus/instances/{name}/proxies/{device}:
+    delete:
+      tags: [Incus]
+      operationId: removeIncusProxy
+      summary: Remove encaminhamento de porta (proxy device) da instância
+      parameters:
+        - { in: path, name: name, required: true, schema: { type: string } }
+        - { in: path, name: device, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Proxy removido }
+  /api/v1/incus/instances/{name}/snapshots:
+    get:
+      tags: [Incus]
+      operationId: listIncusSnapshots
+      summary: Lista snapshots de uma instância
+      parameters:
+        - { in: path, name: name, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Lista de snapshots }
+    post:
+      tags: [Incus]
+      operationId: createIncusSnapshot
+      summary: Cria snapshot de uma instância
+      parameters:
+        - { in: path, name: name, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Snapshot criado }
+  /api/v1/incus/instances/{name}/snapshots/{snap}/restore:
+    post:
+      tags: [Incus]
+      operationId: restoreIncusSnapshot
+      summary: Restaura snapshot de uma instância
+      parameters:
+        - { in: path, name: name, required: true, schema: { type: string } }
+        - { in: path, name: snap, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Snapshot restaurado }
+  /api/v1/incus/instances/{name}/snapshots/{snap}:
+    delete:
+      tags: [Incus]
+      operationId: deleteIncusSnapshot
+      summary: Exclui snapshot de uma instância
+      parameters:
+        - { in: path, name: name, required: true, schema: { type: string } }
+        - { in: path, name: snap, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Snapshot removido }
+  /api/v1/incus/instances/{name}/backups:
+    get:
+      tags: [Incus]
+      operationId: listIncusBackups
+      summary: Lista backups compactados da instância
+      parameters:
+        - { in: path, name: name, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Lista de backups }
+    post:
+      tags: [Incus]
+      operationId: createIncusBackup
+      summary: Cria backup compactado da instância
+      parameters:
+        - { in: path, name: name, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Backup criado }
+  /api/v1/incus/instances/{name}/backups/{backup}:
+    delete:
+      tags: [Incus]
+      operationId: deleteIncusBackup
+      summary: Remove backup compactado da instância
+      parameters:
+        - { in: path, name: name, required: true, schema: { type: string } }
+        - { in: path, name: backup, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Backup removido }
+  /api/v1/incus/instances/{name}/backups/{backup}/export:
+    get:
+      tags: [Incus]
+      operationId: exportIncusBackup
+      summary: Faz streaming direto do arquivo .tar.gz do backup via vektor-ctl.socket
+      parameters:
+        - { in: path, name: name, required: true, schema: { type: string } }
+        - { in: path, name: backup, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Stream binário do arquivo de backup
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
 components:
   securitySchemes:
     sessionCookie:
@@ -385,7 +707,7 @@ components:
       example: 'host:local'
     ResourceKind:
       type: string
-      enum: [host, cpu_core, disk, filesystem, nic, sensor]
+      enum: [host, cpu_core, disk, filesystem, nic, sensor, incus_instance]
     Resource:
       type: object
       required: [id, kind, external_key, display_name, metadata_json, active, first_seen_ms, last_seen_ms]

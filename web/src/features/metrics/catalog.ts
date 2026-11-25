@@ -13,4 +13,6 @@ export const metric = {
   rxErrors: 'net.rx_errors_per_sec', txErrors: 'net.tx_errors_per_sec',
   rxDrops: 'net.rx_drops_per_sec', txDrops: 'net.tx_drops_per_sec',
   temperature: 'sensor.temperature_celsius',
+  incusCpu: 'incus.cpu_pct', incusMemory: 'incus.memory_bytes',
+  incusDisk: 'incus.disk_bytes', incusProcesses: 'incus.processes',
 } as const

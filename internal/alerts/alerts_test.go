@@ -181,3 +181,62 @@ func TestEvaluatorFiringResolutionAndWebhookDelivery(t *testing.T) {
 		t.Fatalf("unexpected webhook payloads: %+v", received)
 	}
 }
+
+func TestEvaluatorAsyncWebhookDoesNotBlock(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	db := openTestDB(t)
+	store := NewStore(db)
+
+	releaseHook := make(chan struct{})
+	delivered := make(chan struct{}, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-releaseHook
+		w.WriteHeader(http.StatusOK)
+		delivered <- struct{}{}
+	}))
+	defer srv.Close()
+
+	if _, err := store.CreateChannel(ctx, ChannelInput{Name: "Slow hook", URL: srv.URL, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateRule(ctx, RuleInput{
+		Name: "CPU > 50%", ResourceID: "host:local", MetricKey: "cpu.busy_pct",
+		Operator: "gt", Threshold: 50, DurationSeconds: 0, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Minute)
+	_, _ = db.Writer().ExecContext(ctx, `INSERT INTO resources (id, kind, external_key, display_name, metadata_json, active, first_seen_ms, last_seen_ms) VALUES ('host:local', 'host', 'host:local', 'test', '{}', 1, ?, ?)`, now.UnixMilli(), now.UnixMilli())
+	_, _ = db.Writer().ExecContext(ctx, `INSERT INTO metric_buckets (resource_id, metric_key, resolution_s, bucket_start_ms, sample_count, value_sum, value_min, value_max, value_last, last_sample_ms) VALUES ('host:local', 'cpu.busy_pct', 30, ?, 1, 90, 90, 90, 90, ?)`, now.UnixMilli(), now.UnixMilli())
+
+	eval := NewEvaluator(store, NewNotifier(), nil)
+	eval.interval = time.Hour
+	eval.now = func() time.Time { return now }
+
+	runDone := make(chan error, 1)
+	go func() { runDone <- eval.Run(ctx) }()
+
+	// Wait until worker is active.
+	for !eval.workerActive.Load() {
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// EvaluateOnce must return immediately even though webhook server is blocked.
+	start := time.Now()
+	if err := eval.EvaluateOnce(ctx); err != nil {
+		t.Fatalf("evaluate once: %v", err)
+	}
+	if time.Since(start) > 200*time.Millisecond {
+		t.Fatalf("EvaluateOnce blocked on slow webhook (%v)", time.Since(start))
+	}
+
+	close(releaseHook)
+	select {
+	case <-delivered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("async webhook worker did not deliver notification")
+	}
+	cancel()
+	<-runDone
+}

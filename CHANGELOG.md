@@ -6,6 +6,27 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o 
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-25
+
+### Added
+- **Fase 5 — Incus OCI Nativo (Application Containers):**
+  - Detecção automática da extensão `instance_oci` via `/1.0` (`oci_supported` e `oci_count`) com aviso na UI quando o host ainda executa Incus sem suporte OCI.
+  - Criação de App Containers OCI direto de registros (`Docker Hub` / `GHCR`) na aba **Instances**, com presets (`Nginx`, `Caddy 2`, `Redis 7`, `Valkey 8`, `PostgreSQL 16` ou imagem customizada), variáveis de ambiente (`CHAVE=VALOR`) e porta exposta inicial.
+  - Badge **`OCI`** e filtro dedicado *Apps OCI* na listagem de instâncias.
+- **Port Forwarding (`proxy` devices) & Variáveis de Ambiente:**
+  - Endpoints `POST /api/v1/incus/instances/{name}/proxies` e `DELETE .../proxies/{device}`, e suporte a `env` / `unset_env` no `PATCH /api/v1/incus/instances/{name}` via `vektor-ctl.socket` (auditados em `audit_log`).
+  - Nova aba **Portas & Env** em `InstanceDetail` para gerenciar proxy devices (`TCP`/`UDP`, `0.0.0.0`/`127.0.0.1`) e variáveis `environment.*`.
+- **Download de Backups via Streaming Zero-Copy:**
+  - Novo suporte a streaming binário no protocolo `vektor-ctl.socket` (`StreamExecutor` + `Client.DoStream`) e endpoint `GET /api/v1/incus/instances/{name}/backups/{backup}/export` com botão **Baixar** (`.tar.gz`) na aba *Backups*.
+- **Métricas Históricas (SQLite) por Instância Incus:**
+  - Novo tipo de recurso `incus_instance` (`incus:<nome>`), 4 métricas no catálogo (`incus.cpu_pct`, `incus.memory_bytes`, `incus.disk_bytes`, `incus.processes`) e coletor opcional `internal/metrics/collector/incus.go` integrado ao `Scheduler` (rollups `30s`/`5m`/`1h`).
+  - Nova aba **Métricas** em `InstanceDetail` com seletor de janela (`15m`–`30d`) e gráficos históricos `ChartPanel`.
+- **Modo Demo atualizado** com containers OCI, proxies, env, export de backup e séries históricas simuladas por instância.
+
+### Changed
+- **Worker assíncrono de webhooks (`internal/alerts/evaluator.go`):** entregas de webhook agora rodam em goroutine dedicada com fila bufferizada e timeout isolado, impedindo que endpoints lentos bloqueiem o ciclo de avaliação de alertas.
+- **OpenAPI sincronizado:** [docs/openapi-v1.yaml](docs/openapi-v1.yaml) atualizado com todas as rotas (`diagnostics`, `update`, `alerts`, `hostmgmt`, `audit` e `incus` completo) e `web/src/lib/api/openapi.d.ts` regenerado.
+
 ## [0.8.3] - 2026-11-25
 
 ### Added

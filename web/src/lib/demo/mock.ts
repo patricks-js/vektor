@@ -27,23 +27,31 @@ function getDemoIncus() {
     const now = Date.now()
     demoIncusInstances = [
       {
-        name: 'caddy-edge', type: 'container', status: 'Running', description: 'Reverse proxy & TLS termination',
+        name: 'caddy-edge', type: 'container', oci: true, status: 'Running', description: 'OCI reverse proxy & TLS termination',
         architecture: 'x86_64', ephemeral: false, stateful: false, profiles: ['default'],
         created_at: new Date(now - 28 * 86400_000).toISOString(), last_used_at: new Date(now - 3600_000).toISOString(),
-        cpu_limit: '2', memory_limit: '1GiB', autostart: true, cpu_usage_ns: 94_000_000_000,
+        cpu_limit: '2', memory_limit: '1GiB', autostart: true,
+        env: { CADDY_ADMIN: '0.0.0.0:2019', TZ: 'UTC' },
+        proxies: [
+          { name: 'http', listen: 'tcp:0.0.0.0:8080', connect: 'tcp:127.0.0.1:80' },
+          { name: 'https', listen: 'tcp:0.0.0.0:8443', connect: 'tcp:127.0.0.1:443' },
+        ],
+        cpu_usage_ns: 94_000_000_000,
         memory_usage_bytes: 184 * MiB, memory_peak_bytes: 290 * MiB, disk_usage_bytes: 1.4 * GiB,
         processes: 14, pid: 3112, ipv4: ['10.24.0.10'], ipv6: ['fd42:1::10'], snapshots_count: 2,
       },
       {
-        name: 'postgres-prod', type: 'container', status: 'Running', description: 'Primary PostgreSQL 16 instance',
+        name: 'postgres-prod', type: 'container', oci: false, status: 'Running', description: 'Primary PostgreSQL 16 instance',
         architecture: 'x86_64', ephemeral: false, stateful: false, profiles: ['default'],
         created_at: new Date(now - 45 * 86400_000).toISOString(), last_used_at: new Date(now - 1800_000).toISOString(),
-        cpu_limit: '4', memory_limit: '8GiB', autostart: true, cpu_usage_ns: 412_000_000_000,
+        cpu_limit: '4', memory_limit: '8GiB', autostart: true,
+        proxies: [{ name: 'pg', listen: 'tcp:127.0.0.1:5432', connect: 'tcp:127.0.0.1:5432' }],
+        cpu_usage_ns: 412_000_000_000,
         memory_usage_bytes: 3.6 * GiB, memory_peak_bytes: 5.1 * GiB, disk_usage_bytes: 18.2 * GiB,
         processes: 29, pid: 3490, ipv4: ['10.24.0.20'], ipv6: [], snapshots_count: 1,
       },
       {
-        name: 'ubuntu-lab', type: 'virtual-machine', status: 'Running', description: 'KVM dev & CI runner VM',
+        name: 'ubuntu-lab', type: 'virtual-machine', oci: false, status: 'Running', description: 'KVM dev & CI runner VM',
         architecture: 'x86_64', ephemeral: false, stateful: false, profiles: ['default'],
         created_at: new Date(now - 14 * 86400_000).toISOString(), last_used_at: new Date(now - 600_000).toISOString(),
         cpu_limit: '4', memory_limit: '4GiB', autostart: false, cpu_usage_ns: 280_000_000_000,
@@ -51,7 +59,7 @@ function getDemoIncus() {
         processes: 112, pid: 4120, ipv4: ['10.24.0.35'], ipv6: [], snapshots_count: 1,
       },
       {
-        name: 'debian-staging', type: 'virtual-machine', status: 'Stopped', description: 'Pre-production validation VM',
+        name: 'debian-staging', type: 'virtual-machine', oci: false, status: 'Stopped', description: 'Pre-production validation VM',
         architecture: 'x86_64', ephemeral: false, stateful: false, profiles: ['default'],
         created_at: new Date(now - 9 * 86400_000).toISOString(), last_used_at: new Date(now - 2 * 86400_000).toISOString(),
         cpu_limit: '2', memory_limit: '2GiB', autostart: false, cpu_usage_ns: 0,
@@ -59,7 +67,7 @@ function getDemoIncus() {
         processes: 0, pid: 0, ipv4: [], ipv6: [], snapshots_count: 0,
       },
       {
-        name: 'redis-cache', type: 'container', status: 'Frozen', description: 'In-memory session & queue cache',
+        name: 'redis-cache', type: 'container', oci: true, status: 'Frozen', description: 'OCI in-memory session & queue cache',
         architecture: 'x86_64', ephemeral: false, stateful: false, profiles: ['default'],
         created_at: new Date(now - 6 * 86400_000).toISOString(), last_used_at: new Date(now - 12 * 3600_000).toISOString(),
         cpu_limit: '1', memory_limit: '512MiB', autostart: true, cpu_usage_ns: 12_000_000_000,
@@ -223,6 +231,7 @@ function metricUnit(key: string): string {
   if (key.endsWith('_per_sec') && key.includes('errors')) return 'errors/s'
   if (key.endsWith('_per_sec') && key.includes('drops')) return 'drops/s'
   if (key.endsWith('_per_sec')) return 'ops/s'
+  if (key === metric.incusProcesses) return 'count'
   return ''
 }
 
@@ -307,6 +316,14 @@ function sampleValue(id: string, key: string, tsMs: number): number {
     case metric.rxDrops:
     case metric.txDrops:
       return 0
+    case metric.incusCpu:
+      return clamp(14 + w * 10, 0.5, 95)
+    case metric.incusMemory:
+      return (512 + w * 140) * MiB
+    case metric.incusDisk:
+      return (2.4 + wave(tsMs, s + 0.1) * 0.1) * GiB
+    case metric.incusProcesses:
+      return Math.round(clamp(18 + w * 4, 4, 80))
     case metric.temperature: {
       const base = id.includes('k10temp') ? 51 : id.includes('nvme') ? 41 : id.includes('acpi') ? 45 : 39
       return clamp(base + w * 6.5, 28, 84)
@@ -635,14 +652,16 @@ export function createDemoApi(onUnauthorized?: () => void): Api {
       const { instances } = getDemoIncus()
       return {
         available: true,
-        server_version: '6.8',
+        server_version: '7.0',
         kernel_version: '6.8.0-52-generic',
         drivers: ['lxc', 'qemu'],
         storage_drivers: ['zfs', 'dir'],
+        oci_supported: true,
         instance_count: instances.length,
         running_count: instances.filter(i => i.status === 'Running').length,
         vm_count: instances.filter(i => i.type === 'virtual-machine').length,
         container_count: instances.filter(i => i.type === 'container').length,
+        oci_count: instances.filter(i => i.oci).length,
       }
     },
     async incusInstances(signal) {
@@ -667,7 +686,8 @@ export function createDemoApi(onUnauthorized?: () => void): Api {
       const nowIso = new Date().toISOString()
       instances.push({
         name: input.name,
-        type: input.type,
+        type: input.protocol === 'oci' ? 'container' : input.type,
+        oci: input.protocol === 'oci',
         status: input.start ? 'Running' : 'Stopped',
         description: input.description ?? '',
         architecture: 'x86_64',
@@ -679,6 +699,8 @@ export function createDemoApi(onUnauthorized?: () => void): Api {
         cpu_limit: input.cpu_limit,
         memory_limit: input.memory_limit,
         autostart: false,
+        env: input.env,
+        proxies: input.proxies,
         cpu_usage_ns: 0,
         memory_usage_bytes: input.start ? 128 * MiB : 0,
         memory_peak_bytes: input.start ? 160 * MiB : 0,
@@ -793,6 +815,10 @@ export function createDemoApi(onUnauthorized?: () => void): Api {
       if (input.cpu_limit !== undefined) inst.cpu_limit = input.cpu_limit || undefined
       if (input.memory_limit !== undefined) inst.memory_limit = input.memory_limit || undefined
       if (input.autostart !== undefined) inst.autostart = input.autostart
+      if (input.env) inst.env = { ...(inst.env ?? {}), ...input.env }
+      if (input.unset_env?.length && inst.env) {
+        for (const k of input.unset_env) delete inst.env[k]
+      }
       getDemoAudit().unshift({
         id: nextAlertId++, actor: 'admin', action: 'incus.instance.update', target: `incus:${name}`, status: 'ok',
         detail: `instance ${name} updated (demo)`, created_at_ms: Date.now(),
@@ -858,6 +884,32 @@ export function createDemoApi(onUnauthorized?: () => void): Api {
         detail: `backup ${name}/${backupName} deleted (demo)`, created_at_ms: Date.now(),
       })
       return { ok: true, message: `backup ${name}/${backupName} deleted` }
+    },
+    incusBackupExportUrl: (name, backupName) =>
+      `data:application/octet-stream;charset=utf-8,${encodeURIComponent(`demo-backup-${name}-${backupName}`)}`,
+    async incusAddProxy(_session, name, proxy, signal) {
+      checkAbort(signal)
+      requireSession()
+      const inst = getDemoIncus().instances.find(i => i.name === name)
+      if (!inst) throw new ApiError(404, 'not_found', 0, undefined, 'Instance not found')
+      inst.proxies = [...(inst.proxies ?? []).filter(p => p.name !== proxy.name), proxy]
+      getDemoAudit().unshift({
+        id: nextAlertId++, actor: 'admin', action: 'incus.proxy.add', target: `incus:${name}/proxy:${proxy.name}`, status: 'ok',
+        detail: `proxy ${proxy.name} added to ${name} (demo)`, created_at_ms: Date.now(),
+      })
+      return { ok: true, message: `proxy ${proxy.name} added to ${name}` }
+    },
+    async incusRemoveProxy(_session, name, deviceName, signal) {
+      checkAbort(signal)
+      requireSession()
+      const inst = getDemoIncus().instances.find(i => i.name === name)
+      if (!inst) throw new ApiError(404, 'not_found', 0, undefined, 'Instance not found')
+      inst.proxies = (inst.proxies ?? []).filter(p => p.name !== deviceName)
+      getDemoAudit().unshift({
+        id: nextAlertId++, actor: 'admin', action: 'incus.proxy.remove', target: `incus:${name}/proxy:${deviceName}`, status: 'ok',
+        detail: `proxy ${deviceName} removed from ${name} (demo)`, created_at_ms: Date.now(),
+      })
+      return { ok: true, message: `proxy ${deviceName} removed from ${name}` }
     },
   }
 }

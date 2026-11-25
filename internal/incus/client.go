@@ -18,6 +18,7 @@ import (
 
 const (
 	defaultImagesServer = "https://images.linuxcontainers.org"
+	defaultOCIServer    = "https://registry-1.docker.io"
 	maxResponseBytes    = 8 << 20 // 8 MiB
 )
 
@@ -164,7 +165,8 @@ func (c *Client) Status(ctx context.Context) (Status, error) {
 		return Status{Available: false, Reason: err.Error()}, nil
 	}
 	var srv struct {
-		Environment struct {
+		APIExtensions []string `json:"api_extensions"`
+		Environment   struct {
 			ServerVersion string `json:"server_version"`
 			KernelVersion string `json:"kernel_version"`
 			Driver        string `json:"driver"`
@@ -173,12 +175,21 @@ func (c *Client) Status(ctx context.Context) (Status, error) {
 	}
 	_ = json.Unmarshal(env.Metadata, &srv)
 
+	ociSupported := false
+	for _, ext := range srv.APIExtensions {
+		if ext == "instance_oci" {
+			ociSupported = true
+			break
+		}
+	}
+
 	st := Status{
 		Available:      true,
 		ServerVersion:  srv.Environment.ServerVersion,
 		KernelVersion:  srv.Environment.KernelVersion,
 		Drivers:        splitPipe(srv.Environment.Driver),
 		StorageDrivers: splitPipe(srv.Environment.Storage),
+		OCISupported:   ociSupported,
 	}
 
 	if list, err := c.ListInstances(ctx); err == nil {
@@ -191,6 +202,9 @@ func (c *Client) Status(ctx context.Context) (Status, error) {
 				st.VMCount++
 			} else {
 				st.ContainerCount++
+				if inst.OCI {
+					st.OCICount++
+				}
 			}
 		}
 	}
@@ -198,20 +212,22 @@ func (c *Client) Status(ctx context.Context) (Status, error) {
 }
 
 type rawInstance struct {
-	Name         string            `json:"name"`
-	Type         string            `json:"type"`
-	Status       string            `json:"status"`
-	Description  string            `json:"description"`
-	Architecture string            `json:"architecture"`
-	Ephemeral    bool              `json:"ephemeral"`
-	Stateful     bool              `json:"stateful"`
-	Profiles     []string          `json:"profiles"`
-	Config       map[string]string `json:"config"`
-	ExpandedCfg  map[string]string `json:"expanded_config"`
-	CreatedAt    time.Time         `json:"created_at"`
-	LastUsedAt   time.Time         `json:"last_used_at"`
-	Snapshots    []json.RawMessage `json:"snapshots"`
-	State        *rawInstanceState `json:"state"`
+	Name            string                       `json:"name"`
+	Type            string                       `json:"type"`
+	Status          string                       `json:"status"`
+	Description     string                       `json:"description"`
+	Architecture    string                       `json:"architecture"`
+	Ephemeral       bool                         `json:"ephemeral"`
+	Stateful        bool                         `json:"stateful"`
+	Profiles        []string                     `json:"profiles"`
+	Config          map[string]string            `json:"config"`
+	ExpandedCfg     map[string]string            `json:"expanded_config"`
+	Devices         map[string]map[string]string `json:"devices"`
+	ExpandedDevices map[string]map[string]string `json:"expanded_devices"`
+	CreatedAt       time.Time                    `json:"created_at"`
+	LastUsedAt      time.Time                    `json:"last_used_at"`
+	Snapshots       []json.RawMessage            `json:"snapshots"`
+	State           *rawInstanceState            `json:"state"`
 }
 
 type rawInstanceState struct {
@@ -246,9 +262,36 @@ func mapRawInstance(r rawInstance) Instance {
 	if instType == "" {
 		instType = "container"
 	}
+	isOCI := cfg["oci.entrypoint"] != "" || cfg["oci.cwd"] != "" || cfg["oci.uid"] != "" || strings.EqualFold(cfg["image.type"], "oci")
+	var envMap map[string]string
+	for k, v := range r.Config {
+		if strings.HasPrefix(k, "environment.") {
+			if envMap == nil {
+				envMap = make(map[string]string)
+			}
+			envMap[strings.TrimPrefix(k, "environment.")] = v
+		}
+	}
+	devs := r.ExpandedDevices
+	if len(devs) == 0 {
+		devs = r.Devices
+	}
+	var proxies []ProxyDevice
+	for devName, d := range devs {
+		if d["type"] == "proxy" {
+			proxies = append(proxies, ProxyDevice{
+				Name:    devName,
+				Listen:  d["listen"],
+				Connect: d["connect"],
+			})
+		}
+	}
+	sort.Slice(proxies, func(i, j int) bool { return proxies[i].Name < proxies[j].Name })
+
 	inst := Instance{
 		Name:           r.Name,
 		Type:           instType,
+		OCI:            isOCI,
 		Status:         r.Status,
 		Description:    r.Description,
 		Architecture:   r.Architecture,
@@ -258,6 +301,8 @@ func mapRawInstance(r rawInstance) Instance {
 		CPULimit:       cfg["limits.cpu"],
 		MemoryLimit:    cfg["limits.memory"],
 		Autostart:      strings.EqualFold(cfg["boot.autostart"], "true") || cfg["boot.autostart"] == "1",
+		Env:            envMap,
+		Proxies:        proxies,
 		IPv4:           []string{},
 		IPv6:           []string{},
 		SnapshotsCount: len(r.Snapshots),
@@ -381,20 +426,60 @@ func (c *Client) CreateInstance(ctx context.Context, req CreateInstanceRequest) 
 		return errors.New("invalid image alias")
 	}
 
-	alias := req.Image
-	source := map[string]any{
-		"type":     "image",
-		"mode":     "pull",
-		"protocol": "simplestreams",
-		"server":   defaultImagesServer,
-		"alias":    alias,
-	}
-	if strings.HasPrefix(alias, "images:") {
-		source["alias"] = strings.TrimPrefix(alias, "images:")
-	} else if strings.HasPrefix(alias, "local:") {
+	alias := strings.TrimSpace(req.Image)
+	protocol := strings.TrimSpace(req.Protocol)
+	server := strings.TrimSpace(req.Server)
+
+	var source map[string]any
+	switch {
+	case protocol == "oci" || strings.HasPrefix(alias, "docker:") || strings.HasPrefix(alias, "ghcr:"):
+		if strings.HasPrefix(alias, "docker:") {
+			alias = strings.TrimPrefix(alias, "docker:")
+			if server == "" {
+				server = defaultOCIServer
+			}
+		} else if strings.HasPrefix(alias, "ghcr:") {
+			alias = strings.TrimPrefix(alias, "ghcr:")
+			if server == "" {
+				server = "https://ghcr.io"
+			}
+		}
+		if server == "" {
+			server = defaultOCIServer
+		}
+		if !strings.HasPrefix(server, "https://") && !strings.HasPrefix(server, "http://") {
+			return errors.New("OCI server must start with https:// or http://")
+		}
+		// Docker Hub official images require the library/ prefix for Incus OCI pulls.
+		if server == defaultOCIServer && !strings.Contains(alias, "/") {
+			alias = "library/" + alias
+		}
+		instType = "container"
+		source = map[string]any{
+			"type":     "image",
+			"mode":     "pull",
+			"protocol": "oci",
+			"server":   server,
+			"alias":    alias,
+		}
+	case strings.HasPrefix(alias, "local:"):
 		source = map[string]any{
 			"type":  "image",
 			"alias": strings.TrimPrefix(alias, "local:"),
+		}
+	default:
+		if strings.HasPrefix(alias, "images:") {
+			alias = strings.TrimPrefix(alias, "images:")
+		}
+		if server == "" {
+			server = defaultImagesServer
+		}
+		source = map[string]any{
+			"type":     "image",
+			"mode":     "pull",
+			"protocol": "simplestreams",
+			"server":   server,
+			"alias":    alias,
 		}
 	}
 
@@ -405,6 +490,25 @@ func (c *Client) CreateInstance(ctx context.Context, req CreateInstanceRequest) 
 	if strings.TrimSpace(req.MemoryLimit) != "" {
 		cfg["limits.memory"] = strings.TrimSpace(req.MemoryLimit)
 	}
+	for k, v := range req.Env {
+		if !ValidEnvKey(k) {
+			return fmt.Errorf("invalid environment variable name %q", k)
+		}
+		cfg["environment."+k] = v
+	}
+
+	devices := map[string]map[string]string{}
+	for _, p := range req.Proxies {
+		if !ValidDeviceName(p.Name) || !ValidProxyAddr(p.Listen) || !ValidProxyAddr(p.Connect) {
+			return fmt.Errorf("invalid proxy device %q", p.Name)
+		}
+		devices[p.Name] = map[string]string{
+			"type":    "proxy",
+			"listen":  p.Listen,
+			"connect": p.Connect,
+		}
+	}
+
 	profiles := req.Profiles
 	if len(profiles) == 0 {
 		profiles = []string{"default"}
@@ -417,6 +521,9 @@ func (c *Client) CreateInstance(ctx context.Context, req CreateInstanceRequest) 
 		"profiles":    profiles,
 		"config":      cfg,
 		"source":      source,
+	}
+	if len(devices) > 0 {
+		payload["devices"] = devices
 	}
 	env, err := c.do(ctx, http.MethodPost, "/1.0/instances", payload)
 	if err != nil {
@@ -465,6 +572,18 @@ func (c *Client) UpdateInstance(ctx context.Context, name string, req UpdateInst
 		} else {
 			cfg["boot.autostart"] = "false"
 		}
+	}
+	for k, v := range req.Env {
+		if !ValidEnvKey(k) {
+			return fmt.Errorf("invalid environment variable name %q", k)
+		}
+		cfg["environment."+k] = v
+	}
+	for _, k := range req.UnsetEnv {
+		if !ValidEnvKey(k) {
+			return fmt.Errorf("invalid environment variable name %q", k)
+		}
+		cfg["environment."+k] = ""
 	}
 	if len(cfg) > 0 {
 		payload["config"] = cfg
@@ -604,6 +723,73 @@ func (c *Client) DeleteBackup(ctx context.Context, instanceName, backupName stri
 		return ErrInvalidName
 	}
 	env, err := c.do(ctx, http.MethodDelete, "/1.0/instances/"+url.PathEscape(instanceName)+"/backups/"+url.PathEscape(backupName), nil)
+	if err != nil {
+		return err
+	}
+	return c.waitOperation(ctx, env.Operation)
+}
+
+func (c *Client) ExportBackup(ctx context.Context, instanceName, backupName string) (io.ReadCloser, error) {
+	if !ValidInstanceName(instanceName) || !ValidSnapshotName(backupName) {
+		return nil, ErrInvalidName
+	}
+	endpoint := "/1.0/instances/" + url.PathEscape(instanceName) + "/backups/" + url.PathEscape(backupName) + "/export"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://unix"+endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) || strings.Contains(err.Error(), "no such file or directory") || strings.Contains(err.Error(), "connection refused") {
+			return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
+		}
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		defer resp.Body.Close()
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		var env apiEnvelope
+		if json.Unmarshal(raw, &env) == nil && env.Error != "" {
+			return nil, errors.New(env.Error)
+		}
+		return nil, fmt.Errorf("backup export failed (HTTP %d)", resp.StatusCode)
+	}
+	return resp.Body, nil
+}
+
+func (c *Client) AddProxy(ctx context.Context, instanceName string, proxy ProxyDevice) error {
+	if !ValidInstanceName(instanceName) || !ValidDeviceName(proxy.Name) {
+		return ErrInvalidName
+	}
+	if !ValidProxyAddr(proxy.Listen) || !ValidProxyAddr(proxy.Connect) {
+		return errors.New("proxy listen and connect must follow proto:host:port (e.g. tcp:0.0.0.0:8080)")
+	}
+	payload := map[string]any{
+		"devices": map[string]any{
+			proxy.Name: map[string]string{
+				"type":    "proxy",
+				"listen":  proxy.Listen,
+				"connect": proxy.Connect,
+			},
+		},
+	}
+	env, err := c.do(ctx, http.MethodPatch, "/1.0/instances/"+url.PathEscape(instanceName), payload)
+	if err != nil {
+		return err
+	}
+	return c.waitOperation(ctx, env.Operation)
+}
+
+func (c *Client) RemoveProxy(ctx context.Context, instanceName, deviceName string) error {
+	if !ValidInstanceName(instanceName) || !ValidDeviceName(deviceName) {
+		return ErrInvalidName
+	}
+	payload := map[string]any{
+		"devices": map[string]any{
+			deviceName: nil,
+		},
+	}
+	env, err := c.do(ctx, http.MethodPatch, "/1.0/instances/"+url.PathEscape(instanceName), payload)
 	if err != nil {
 		return err
 	}

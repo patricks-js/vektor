@@ -15,12 +15,13 @@ import (
 )
 
 const (
-	KindHost       = "host"
-	KindCPUCore    = "cpu_core"
-	KindDisk       = "disk"
-	KindFilesystem = "filesystem"
-	KindNIC        = "nic"
-	KindSensor     = "sensor"
+	KindHost          = "host"
+	KindCPUCore       = "cpu_core"
+	KindDisk          = "disk"
+	KindFilesystem    = "filesystem"
+	KindNIC           = "nic"
+	KindSensor        = "sensor"
+	KindIncusInstance = "incus_instance"
 
 	HostResourceID  = metrics.HostResourceID
 	HostExternalKey = "local"
@@ -116,6 +117,74 @@ func (r *Registry) EnsureCPUCores(ctx context.Context, cores []string, nowMs int
 		})
 	}
 	return r.Reconcile(ctx, KindCPUCore, items, nowMs)
+}
+
+// EnsureIncusInstances upserts Incus instances with deterministic resource IDs ("incus:<name>")
+// and marks absent instances inactive without deleting historical metrics.
+func (r *Registry) EnsureIncusInstances(ctx context.Context, items []DiscoveredResource, nowMs int64) error {
+	tx, err := r.db.Writer().BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	seen := make(map[string]struct{}, len(items))
+	for _, it := range items {
+		ext := strings.TrimSpace(it.ExternalKey)
+		if ext == "" {
+			continue
+		}
+		if _, dup := seen[ext]; dup {
+			continue
+		}
+		seen[ext] = struct{}{}
+		id := "incus:" + ext
+		display := strings.TrimSpace(it.DisplayName)
+		if display == "" {
+			display = ext
+		}
+		meta := strings.TrimSpace(it.MetadataJSON)
+		if meta == "" || !json.Valid([]byte(meta)) {
+			meta = "{}"
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO resources (id, kind, external_key, display_name, metadata_json, active, first_seen_ms, last_seen_ms)
+			VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+			ON CONFLICT(kind, external_key) DO UPDATE SET
+				display_name = excluded.display_name,
+				metadata_json = excluded.metadata_json,
+				active = 1,
+				last_seen_ms = excluded.last_seen_ms
+		`, id, KindIncusInstance, ext, display, meta, nowMs, nowMs); err != nil {
+			return fmt.Errorf("upsert incus instance %s: %w", ext, err)
+		}
+	}
+
+	rows, err := tx.QueryContext(ctx, `SELECT external_key FROM resources WHERE kind = ? AND active = 1`, KindIncusInstance)
+	if err != nil {
+		return err
+	}
+	var toDeactivate []string
+	for rows.Next() {
+		var ext string
+		if err := rows.Scan(&ext); err != nil {
+			rows.Close()
+			return err
+		}
+		if _, ok := seen[ext]; !ok {
+			toDeactivate = append(toDeactivate, ext)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, ext := range toDeactivate {
+		if _, err := tx.ExecContext(ctx, `UPDATE resources SET active = 0 WHERE kind = ? AND external_key = ?`, KindIncusInstance, ext); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // Reconcile matches discovered items of kind against SQLite by (kind, external_key),

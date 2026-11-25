@@ -147,6 +147,10 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return fmt.Errorf("read historical clock floor: %w", err)
 	}
 
+	ctlSocket := envOrDefault("VEKTOR_CTL_SOCKET", ctl.DefaultSocketPath)
+	ctlClient := ctl.NewClient(ctlSocket)
+	incusCol := collector.NewIncusCollector(clk, registry, ctlClient)
+
 	sched := scheduler.New(scheduler.Deps{
 		Config:          cfg,
 		Clock:           clk,
@@ -158,6 +162,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		FastCollectors:  fastCols,
 		FSCollector:     fsCol,
 		SensorCollector: sensorCol,
+		IncusCollector:  incusCol,
 		RawWriter:       writer,
 		Maintenance:     maint,
 		LiveHub:         hub,
@@ -223,8 +228,6 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	alertEval := alerts.NewEvaluator(alertStore, alertNotifier, logger)
 	mgmt := hostmgmt.New(cfg.ProcRoot)
 	auditStore := audit.NewStore(db)
-	ctlSocket := envOrDefault("VEKTOR_CTL_SOCKET", ctl.DefaultSocketPath)
-	ctlClient := ctl.NewClient(ctlSocket)
 	diagRunner := &diagnostics.Runner{
 		Health:        health,
 		DBPing:        db.Ping,

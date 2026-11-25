@@ -352,6 +352,14 @@ func (s *Store) RecordEvent(ctx context.Context, ev Event) (Event, error) {
 	return ev, nil
 }
 
+func (s *Store) UpdateEventNotifyError(ctx context.Context, id int64, notifyErr string) error {
+	if id <= 0 {
+		return nil
+	}
+	_, err := s.db.Writer().ExecContext(ctx, `UPDATE alert_events SET notify_error = ? WHERE id = ?`, notifyErr, id)
+	return err
+}
+
 func (s *Store) ListEvents(ctx context.Context, limit int) ([]Event, error) {
 	if limit <= 0 || limit > MaxEvents {
 		limit = 50

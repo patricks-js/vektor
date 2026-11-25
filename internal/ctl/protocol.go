@@ -42,13 +42,14 @@ type Response struct {
 
 func actionTimeout(action string) time.Duration {
 	switch action {
-	case "incus.instance.create", "incus.backup.create":
+	case "incus.instance.create", "incus.backup.create", "incus.backup.export":
 		return 10 * time.Minute
 	case "incus.instance.exec":
 		return 65 * time.Second
 	case "incus.instance.start", "incus.instance.stop", "incus.instance.force_stop",
 		"incus.instance.restart", "incus.instance.freeze", "incus.instance.unfreeze",
 		"incus.instance.delete", "incus.instance.update",
+		"incus.proxy.add", "incus.proxy.remove",
 		"incus.snapshot.create", "incus.snapshot.restore", "incus.snapshot.delete",
 		"incus.backup.delete":
 		return 60 * time.Second
@@ -92,8 +93,13 @@ func ValidateRequest(req Request) error {
 			return ErrInvalidAction
 		}
 		return nil
-	case "incus.instance.update", "incus.instance.exec":
+	case "incus.instance.update", "incus.instance.exec", "incus.proxy.add":
 		if !incus.ValidInstanceName(req.Target) || len(req.Payload) == 0 {
+			return ErrInvalidAction
+		}
+		return nil
+	case "incus.proxy.remove":
+		if !incus.ValidInstanceName(req.Target) || !incus.ValidDeviceName(req.Signal) {
 			return ErrInvalidAction
 		}
 		return nil
@@ -102,7 +108,7 @@ func ValidateRequest(req Request) error {
 			return ErrInvalidAction
 		}
 		return nil
-	case "incus.snapshot.restore", "incus.snapshot.delete", "incus.backup.delete":
+	case "incus.snapshot.restore", "incus.snapshot.delete", "incus.backup.delete", "incus.backup.export":
 		if !incus.ValidInstanceName(req.Target) || !incus.ValidSnapshotName(req.Signal) {
 			return ErrInvalidAction
 		}
@@ -165,4 +171,61 @@ func (c *Client) Do(ctx context.Context, req Request) (Response, error) {
 		return Response{}, err
 	}
 	return resp, nil
+}
+
+type connStream struct {
+	r    *bufio.Reader
+	conn net.Conn
+}
+
+func (s *connStream) Read(p []byte) (int, error) { return s.r.Read(p) }
+func (s *connStream) Close() error               { return s.conn.Close() }
+
+// DoStream executes a streaming control action (such as incus.backup.export), reading
+// the JSON response header line and returning the remaining raw byte stream.
+func (c *Client) DoStream(ctx context.Context, req Request) (io.ReadCloser, error) {
+	if err := ValidateRequest(req); err != nil {
+		return nil, err
+	}
+	timeout := actionTimeout(req.Action)
+	if c.timeout > timeout {
+		timeout = c.timeout
+	}
+	var dialer net.Dialer
+	dialCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	conn, err := dialer.DialContext(dialCtx, "unix", c.socketPath)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	if deadline, ok := dialCtx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
+	}
+	raw, err := json.Marshal(req)
+	if err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	if _, err := conn.Write(append(raw, '\n')); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+
+	br := bufio.NewReader(conn)
+	line, err := br.ReadBytes('\n')
+	if err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	var resp Response
+	if err := json.Unmarshal(line, &resp); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	if !resp.OK {
+		_ = conn.Close()
+		return nil, errors.New(resp.Error)
+	}
+	return &connStream{r: br, conn: conn}, nil
 }

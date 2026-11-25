@@ -20,6 +20,19 @@ const IMAGE_PRESETS = [
   { label: 'Arch Linux', value: 'images:archlinux' },
 ]
 
+const OCI_PRESETS = [
+  { label: 'Nginx (Alpine)', value: 'nginx:alpine', port: '80' },
+  { label: 'Caddy 2 (Alpine)', value: 'caddy:2-alpine', port: '80' },
+  { label: 'Redis 7 (Alpine)', value: 'redis:7-alpine', port: '6379' },
+  { label: 'Valkey 8 (Alpine)', value: 'valkey/valkey:8-alpine', port: '6379' },
+  { label: 'PostgreSQL 16 (Alpine)', value: 'postgres:16-alpine', port: '5432' },
+]
+
+const OCI_REGISTRIES = [
+  { label: 'Docker Hub (registry-1.docker.io)', value: 'https://registry-1.docker.io' },
+  { label: 'GitHub Container Registry (ghcr.io)', value: 'https://ghcr.io' },
+]
+
 const s = stylex.create({
   kpiGrid: {
     display: 'grid', gap: 12,
@@ -84,6 +97,15 @@ const s = stylex.create({
   feedbackSuccess: {
     borderColor: 'var(--vk-success)', backgroundColor: 'var(--vk-surface-1)', color: 'var(--vk-success)',
   },
+  typeTagOCI: {
+    backgroundColor: 'var(--vk-surface-3)', color: 'var(--vk-info)', borderColor: 'var(--vk-info)',
+  },
+  textarea: {
+    width: '100%', minHeight: 72, paddingBlock: 8, paddingInline: 12,
+    borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--vk-border-control)',
+    borderRadius: 'var(--vk-radius-2)', backgroundColor: 'var(--vk-bg)', color: 'var(--vk-text-primary)',
+    fontFamily: 'var(--vk-mono)', fontSize: 12, resize: 'vertical',
+  },
   pagination: {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10,
     paddingTop: 4, fontSize: 12, color: 'var(--vk-text-secondary)',
@@ -100,7 +122,23 @@ function statusTone(status: string): 'success' | 'warning' | 'critical' | 'neutr
 }
 
 const INSTANCE_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9-]{0,62}$/
-const IMAGE_ALIAS_RE = /^[a-zA-Z0-9._:/-]{1,128}$/
+const IMAGE_ALIAS_RE = /^[a-zA-Z0-9._:/@-]{1,256}$/
+const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/
+
+function parseEnvLines(raw: string): { env?: Record<string, string>; error?: string } {
+  const lines = raw.split('\n').map(l => l.trim()).filter(Boolean)
+  if (lines.length === 0) return {}
+  const env: Record<string, string> = {}
+  for (const line of lines) {
+    const idx = line.indexOf('=')
+    if (idx <= 0) return { error: `Formato inválido em "${line}" (use CHAVE=VALOR).` }
+    const k = line.slice(0, idx).trim()
+    const v = line.slice(idx + 1)
+    if (!ENV_KEY_RE.test(k)) return { error: `Nome de variável inválido: "${k}".` }
+    env[k] = v
+  }
+  return { env }
+}
 
 export function InstancesPage() {
   const api = useApi()
@@ -109,21 +147,26 @@ export function InstancesPage() {
 
   const [tab, setTab] = useState<'instances' | 'infrastructure'>('instances')
   const [search, setSearch] = useState('')
-  const [typeFilter, setTypeFilter] = useState<'all' | 'container' | 'virtual-machine'>('all')
+  const [typeFilter, setTypeFilter] = useState<'all' | 'container' | 'oci' | 'virtual-machine'>('all')
   const [statusFilter, setStatusFilter] = useState<'all' | 'Running' | 'Stopped'>('all')
   const [page, setPage] = useState(0)
   const [showCreate, setShowCreate] = useState(false)
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'critical'; text: string } | null>(null)
 
   const [newName, setNewName] = useState('')
-  const [newType, setNewType] = useState<'container' | 'virtual-machine'>('container')
+  const [newKind, setNewKind] = useState<'container' | 'oci' | 'virtual-machine'>('container')
   const [newImage, setNewImage] = useState(IMAGE_PRESETS[0].value)
+  const [newOCIImage, setNewOCIImage] = useState(OCI_PRESETS[0].value)
+  const [newOCIRegistry, setNewOCIRegistry] = useState(OCI_REGISTRIES[0].value)
   const [customImage, setCustomImage] = useState('')
   const [newCPU, setNewCPU] = useState('2')
   const [newMemValue, setNewMemValue] = useState('1')
   const [newMemUnit, setNewMemUnit] = useState<'MiB' | 'GiB'>('GiB')
   const [newDesc, setNewDesc] = useState('')
   const [newProfile, setNewProfile] = useState('default')
+  const [newEnvText, setNewEnvText] = useState('')
+  const [newHostPort, setNewHostPort] = useState('')
+  const [newContainerPort, setNewContainerPort] = useState('')
   const [newStart, setNewStart] = useState(true)
   const [submitted, setSubmitted] = useState(false)
 
@@ -176,14 +219,17 @@ export function InstancesPage() {
     onError: (err) => setFeedback({ tone: 'critical', text: err instanceof Error ? err.message : 'Falha ao criar instância.' }),
   })
 
+  const isOCI = newKind === 'oci'
+  const selectedImage = isOCI ? newOCIImage : newImage
+
   const trimmedName = newName.trim()
   const nameError = (submitted || trimmedName.length > 0) && !INSTANCE_NAME_RE.test(trimmedName)
     ? 'Use apenas letras, números e hífen (começando por letra ou número, máx. 63 caracteres).'
     : undefined
 
   const trimmedCustomImg = customImage.trim()
-  const customImageError = newImage === '__custom__' && (submitted || trimmedCustomImg.length > 0) && !IMAGE_ALIAS_RE.test(trimmedCustomImg)
-    ? 'Informe um alias válido (ex: images:ubuntu/24.04).'
+  const customImageError = selectedImage === '__custom__' && (submitted || trimmedCustomImg.length > 0) && !IMAGE_ALIAS_RE.test(trimmedCustomImg)
+    ? (isOCI ? 'Informe uma imagem OCI válida (ex: nginx:alpine ou owner/app:latest).' : 'Informe um alias válido (ex: images:ubuntu/24.04).')
     : undefined
 
   const trimmedCPU = newCPU.trim()
@@ -199,13 +245,25 @@ export function InstancesPage() {
     ? `Informe um inteiro entre 1 e ${memMax} ${newMemUnit} (ou deixe vazio).`
     : undefined
 
-  const formValid = Boolean(trimmedName) && !nameError && !customImageError && !cpuError && !memError
-    && (newImage !== '__custom__' || Boolean(trimmedCustomImg))
+  const parsedEnv = parseEnvLines(newEnvText)
+  const envError = (submitted || newEnvText.trim().length > 0) ? parsedEnv.error : undefined
+
+  const hp = Number(newHostPort.trim())
+  const cp = Number(newContainerPort.trim())
+  const hasAnyPort = newHostPort.trim() !== '' || newContainerPort.trim() !== ''
+  const portError = hasAnyPort && (!Number.isInteger(hp) || hp < 1 || hp > 65535 || !Number.isInteger(cp) || cp < 1 || cp > 65535)
+    ? 'Informe ambas as portas (host e instância) entre 1 e 65535.'
+    : undefined
+
+  const formValid = Boolean(trimmedName) && !nameError && !customImageError && !cpuError && !memError && !envError && !portError
+    && (selectedImage !== '__custom__' || Boolean(trimmedCustomImg))
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     return (instancesQuery.data ?? []).filter(inst => {
-      if (typeFilter !== 'all' && inst.type !== typeFilter) return false
+      if (typeFilter === 'oci' && !inst.oci) return false
+      if (typeFilter === 'container' && (inst.type !== 'container' || inst.oci)) return false
+      if (typeFilter === 'virtual-machine' && inst.type !== 'virtual-machine') return false
       if (statusFilter !== 'all' && inst.status !== statusFilter) return false
       if (q && !inst.name.toLowerCase().includes(q) && !inst.ipv4.some(ip => ip.includes(q)) && !(inst.description ?? '').toLowerCase().includes(q)) {
         return false
@@ -222,16 +280,24 @@ export function InstancesPage() {
     event.preventDefault()
     setSubmitted(true)
     if (!formValid) return
-    const image = newImage === '__custom__' ? trimmedCustomImg : newImage
+    const image = selectedImage === '__custom__' ? trimmedCustomImg : selectedImage
     setFeedback(null)
     createMutation.mutate({
       name: trimmedName,
-      type: newType,
+      type: newKind === 'virtual-machine' ? 'virtual-machine' : 'container',
+      protocol: isOCI ? 'oci' : 'simplestreams',
+      server: isOCI ? newOCIRegistry : undefined,
       image,
       description: newDesc.trim() || undefined,
       cpu_limit: trimmedCPU || undefined,
       memory_limit: trimmedMem ? `${trimmedMem}${newMemUnit}` : undefined,
       profiles: newProfile ? [newProfile] : ['default'],
+      env: parsedEnv.env,
+      proxies: hasAnyPort ? [{
+        name: `port-${hp}`,
+        listen: `tcp:0.0.0.0:${hp}`,
+        connect: `tcp:127.0.0.1:${cp}`,
+      }] : undefined,
       start: newStart,
     })
   }
@@ -243,8 +309,8 @@ export function InstancesPage() {
           <h1 tabIndex={-1} {...stylex.props(layout.pageTitle)}>Instâncias Incus</h1>
           <p {...stylex.props(layout.small)}>
             {statusQuery.data?.available
-              ? `Incus ${statusQuery.data.server_version ?? ''} · Drivers: ${(statusQuery.data.drivers ?? []).join(', ') || 'lxc'}`
-              : 'Gerenciamento de system containers e máquinas virtuais via Incus'}
+              ? `Incus ${statusQuery.data.server_version ?? ''} · Drivers: ${(statusQuery.data.drivers ?? []).join(', ') || 'lxc'}${statusQuery.data.oci_supported ? ' · OCI ativo' : ''}`
+              : 'Gerenciamento de system containers, apps OCI e máquinas virtuais via Incus'}
           </p>
         </div>
         {available && (
@@ -357,31 +423,54 @@ export function InstancesPage() {
           )}
 
           {showCreate && (
-            <Panel title="Criar nova instância" subtitle="Pull automático via images.linuxcontainers.org (imagens de VM podem levar alguns minutos no primeiro download)">
+            <Panel
+              title="Criar nova instância"
+              subtitle={isOCI
+                ? 'Pull direto de registro OCI (Docker Hub / GHCR) como Application Container no Incus'
+                : 'Pull automático via images.linuxcontainers.org (imagens de VM podem levar alguns minutos no primeiro download)'}
+            >
+              {isOCI && !statusQuery.data.oci_supported && (
+                <Badge tone="warning" icon={<StatusDot tone="warning" />}>
+                  Este host reportou Incus {statusQuery.data.server_version} sem extensão instance_oci. Atualize o Incus (6.3+ / 7.x LTS) para criar containers OCI.
+                </Badge>
+              )}
               <form {...stylex.props(layout.stack)} onSubmit={handleCreate} noValidate>
                 <div {...stylex.props(s.formGrid)}>
                   <TextField
                     label="Nome"
                     value={newName}
                     onChange={e => setNewName(e.target.value)}
-                    placeholder="ex: app-01"
+                    placeholder={isOCI ? 'ex: nginx-web' : 'ex: app-01'}
                     error={nameError}
                     required
                   />
-                  <SelectField label="Tipo" value={newType} onChange={e => setNewType(e.target.value as 'container' | 'virtual-machine')}>
+                  <SelectField label="Tipo" value={newKind} onChange={e => setNewKind(e.target.value as 'container' | 'oci' | 'virtual-machine')}>
                     <option value="container">System Container (LXC)</option>
+                    <option value="oci">App Container (OCI / Docker Hub)</option>
                     <option value="virtual-machine">Virtual Machine (KVM/QEMU)</option>
                   </SelectField>
-                  <SelectField label="Imagem" value={newImage} onChange={e => setNewImage(e.target.value)}>
-                    {IMAGE_PRESETS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
-                    <option value="__custom__">Outra (remote:alias)…</option>
-                  </SelectField>
-                  {newImage === '__custom__' && (
+                  {isOCI ? (
+                    <>
+                      <SelectField label="Registro OCI" value={newOCIRegistry} onChange={e => setNewOCIRegistry(e.target.value)}>
+                        {OCI_REGISTRIES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                      </SelectField>
+                      <SelectField label="Imagem OCI" value={newOCIImage} onChange={e => setNewOCIImage(e.target.value)}>
+                        {OCI_PRESETS.map(p => <option key={p.value} value={p.value}>{p.label} ({p.value})</option>)}
+                        <option value="__custom__">Outra imagem OCI…</option>
+                      </SelectField>
+                    </>
+                  ) : (
+                    <SelectField label="Imagem" value={newImage} onChange={e => setNewImage(e.target.value)}>
+                      {IMAGE_PRESETS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+                      <option value="__custom__">Outra (remote:alias)…</option>
+                    </SelectField>
+                  )}
+                  {selectedImage === '__custom__' && (
                     <TextField
-                      label="Alias customizado"
+                      label={isOCI ? 'Imagem OCI customizada' : 'Alias customizado'}
                       value={customImage}
                       onChange={e => setCustomImage(e.target.value)}
-                      placeholder="images:ubuntu/24.04"
+                      placeholder={isOCI ? 'ex: nginx:alpine ou owner/app:latest' : 'images:ubuntu/24.04'}
                       error={customImageError}
                       required
                     />
@@ -427,7 +516,43 @@ export function InstancesPage() {
                     ))}
                   </SelectField>
                   <TextField label="Descrição (opcional)" value={newDesc} onChange={e => setNewDesc(e.target.value)} placeholder="Finalidade da instância" />
+                  <TextField
+                    label="Porta no Host (opcional)"
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    max={65535}
+                    value={newHostPort}
+                    onChange={e => setNewHostPort(e.target.value.replace(/[^0-9]/g, ''))}
+                    placeholder="ex: 8080"
+                    error={portError}
+                  />
+                  <TextField
+                    label="Porta na Instância (opcional)"
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    max={65535}
+                    value={newContainerPort}
+                    onChange={e => setNewContainerPort(e.target.value.replace(/[^0-9]/g, ''))}
+                    placeholder="ex: 80"
+                  />
                 </div>
+                {isOCI && (
+                  <div {...stylex.props(layout.compact)}>
+                    <label htmlFor="oci-env-input" style={{ fontSize: 13, fontWeight: 500 }}>
+                      Variáveis de ambiente (opcional, uma por linha: <code>CHAVE=VALOR</code>)
+                    </label>
+                    <textarea
+                      id="oci-env-input"
+                      value={newEnvText}
+                      onChange={e => setNewEnvText(e.target.value)}
+                      placeholder={'TZ=America/Sao_Paulo\nPOSTGRES_PASSWORD=secret'}
+                      {...stylex.props(s.textarea)}
+                    />
+                    {envError && <span style={{ color: 'var(--vk-critical)', fontSize: 12 }}>{envError}</span>}
+                  </div>
+                )}
                 <div {...stylex.props(layout.split)}>
                   <label {...stylex.props(s.checkboxRow)}>
                     <input type="checkbox" checked={newStart} onChange={e => setNewStart(e.target.checked)} />
@@ -455,7 +580,8 @@ export function InstancesPage() {
                 />
                 <SelectField label="Tipo" value={typeFilter} onChange={e => { setTypeFilter(e.target.value as typeof typeFilter); setPage(0) }}>
                   <option value="all">Todos os tipos</option>
-                  <option value="container">Containers</option>
+                  <option value="container">System Containers</option>
+                  <option value="oci">Apps OCI</option>
                   <option value="virtual-machine">VMs</option>
                 </SelectField>
                 <SelectField label="Estado" value={statusFilter} onChange={e => { setStatusFilter(e.target.value as typeof statusFilter); setPage(0) }}>
@@ -495,7 +621,9 @@ export function InstancesPage() {
                                 <Link to={`/instances/${encodeURIComponent(inst.name)}`} {...stylex.props(s.nameLink)}>
                                   {inst.type === 'virtual-machine' ? <Monitor size={14} aria-hidden /> : <Cpu size={14} aria-hidden />}
                                   <span>{inst.name}</span>
-                                  <span {...stylex.props(s.typeTag)}>{inst.type === 'virtual-machine' ? 'VM' : 'CT'}</span>
+                                  <span {...stylex.props(s.typeTag, inst.oci && s.typeTagOCI)}>
+                                    {inst.type === 'virtual-machine' ? 'VM' : inst.oci ? 'OCI' : 'CT'}
+                                  </span>
                                 </Link>
                                 {inst.description && <div {...stylex.props(s.sub)}>{inst.description}</div>}
                               </div>

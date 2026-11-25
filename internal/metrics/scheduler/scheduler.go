@@ -38,6 +38,7 @@ type Deps struct {
 	FastCollectors    []metrics.Collector
 	FSCollector       *collector.FilesystemCollector
 	SensorCollector   *collector.SensorCollector
+	IncusCollector    *collector.IncusCollector
 	RawWriter         *history.RawWriter
 	Maintenance       *history.MaintenanceRunner
 	LiveHub           *LiveHub
@@ -388,6 +389,14 @@ func (s *Scheduler) RunPersistOnce(ctx context.Context) error {
 	}
 	if s.deps.SensorCollector != nil && s.deps.Config.IncludeSensors {
 		appendCached(s.deps.SensorCollector.CachedSnapshot())
+	}
+	if s.deps.IncusCollector != nil {
+		incusCtx, cancel := context.WithTimeout(ctx, s.collectorTimeout())
+		incusSnap, incusErr := s.deps.IncusCollector.Collect(incusCtx, now)
+		cancel()
+		if incusErr == nil && len(incusSnap.Samples) > 0 {
+			snaps = append(snaps, incusSnap)
+		}
 	}
 
 	var allPoints []metrics.MetricPoint

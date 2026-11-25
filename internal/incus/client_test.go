@@ -237,3 +237,95 @@ func TestClientUpdateExecConsoleAndBackups(t *testing.T) {
 		t.Fatalf("unexpected backups: %+v err=%v", backups, err)
 	}
 }
+
+func TestClientOCIProxiesAndBackupExport(t *testing.T) {
+	var createdBody map[string]any
+	var proxyPatched bool
+	var proxyRemoved bool
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /1.0", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"type": "sync",
+			"metadata": map[string]any{
+				"api_extensions": []string{"instance_oci"},
+				"environment":    map[string]any{"server_version": "7.0", "driver": "lxc | qemu"},
+			},
+		})
+	})
+	mux.HandleFunc("GET /1.0/instances", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"type": "sync",
+			"metadata": []map[string]any{
+				{
+					"name":   "nginx-app",
+					"type":   "container",
+					"status": "Running",
+					"config": map[string]string{"oci.entrypoint": "nginx", "environment.PORT": "80"},
+					"devices": map[string]map[string]string{
+						"http": {"type": "proxy", "listen": "tcp:0.0.0.0:8080", "connect": "tcp:127.0.0.1:80"},
+					},
+				},
+			},
+		})
+	})
+	mux.HandleFunc("POST /1.0/instances", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&createdBody)
+		_ = json.NewEncoder(w).Encode(map[string]any{"type": "sync", "status_code": 200})
+	})
+	mux.HandleFunc("PATCH /1.0/instances/nginx-app", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body["devices"]["https"] == nil {
+			proxyRemoved = true
+		} else {
+			proxyPatched = true
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"type": "sync", "status_code": 200})
+	})
+	mux.HandleFunc("GET /1.0/instances/nginx-app/backups/snap1/export", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write([]byte("TARBALL-BYTES"))
+	})
+
+	sock := startMockIncus(t, mux)
+	c := NewClient(sock)
+	ctx := context.Background()
+
+	st, err := c.Status(ctx)
+	if err != nil || !st.OCISupported || st.OCICount != 1 {
+		t.Fatalf("expected OCISupported=true OCICount=1, got %+v err=%v", st, err)
+	}
+	list, err := c.ListInstances(ctx)
+	if err != nil || len(list) != 1 || !list[0].OCI || list[0].Env["PORT"] != "80" || len(list[0].Proxies) != 1 {
+		t.Fatalf("unexpected OCI instance: %+v err=%v", list, err)
+	}
+	if err := c.CreateInstance(ctx, CreateInstanceRequest{
+		Name: "redis-oci", Protocol: "oci", Image: "redis:7-alpine",
+		Env: map[string]string{"REDIS_ARGS": "--appendonly yes"},
+		Proxies: []ProxyDevice{{Name: "redis", Listen: "tcp:127.0.0.1:6379", Connect: "tcp:127.0.0.1:6379"}},
+	}); err != nil {
+		t.Fatalf("create OCI instance: %v", err)
+	}
+	src := createdBody["source"].(map[string]any)
+	if src["protocol"] != "oci" || src["alias"] != "library/redis:7-alpine" {
+		t.Fatalf("unexpected OCI source: %+v", src)
+	}
+
+	if err := c.AddProxy(ctx, "nginx-app", ProxyDevice{Name: "https", Listen: "tcp:0.0.0.0:8443", Connect: "tcp:127.0.0.1:443"}); err != nil || !proxyPatched {
+		t.Fatalf("add proxy failed: err=%v patched=%v", err, proxyPatched)
+	}
+	if err := c.RemoveProxy(ctx, "nginx-app", "https"); err != nil || !proxyRemoved {
+		t.Fatalf("remove proxy failed: err=%v removed=%v", err, proxyRemoved)
+	}
+
+	rc, err := c.ExportBackup(ctx, "nginx-app", "snap1")
+	if err != nil {
+		t.Fatalf("export backup: %v", err)
+	}
+	defer rc.Close()
+	buf := make([]byte, 32)
+	n, _ := rc.Read(buf)
+	if string(buf[:n]) != "TARBALL-BYTES" {
+		t.Fatalf("unexpected export bytes: %q", string(buf[:n]))
+	}
+}

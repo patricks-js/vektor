@@ -31,6 +31,10 @@ type DataExecutor interface {
 	ExecuteData(ctx context.Context, req Request) (Response, error)
 }
 
+type StreamExecutor interface {
+	ExecuteStream(ctx context.Context, req Request) (io.ReadCloser, error)
+}
+
 type SystemExecutor struct {
 	Incus *incus.Client
 }
@@ -228,6 +232,22 @@ func (e SystemExecutor) ExecuteData(ctx context.Context, req Request) (Response,
 		}
 		return Response{OK: true, Message: fmt.Sprintf("backup %s/%s deleted", req.Target, req.Signal)}, nil
 
+	case "incus.proxy.add":
+		var proxy incus.ProxyDevice
+		if err := json.Unmarshal(req.Payload, &proxy); err != nil {
+			return Response{}, errors.New("invalid proxy payload")
+		}
+		if err := e.incusClient().AddProxy(ctx, req.Target, proxy); err != nil {
+			return Response{}, err
+		}
+		return Response{OK: true, Message: fmt.Sprintf("proxy %s added to %s", proxy.Name, req.Target)}, nil
+
+	case "incus.proxy.remove":
+		if err := e.incusClient().RemoveProxy(ctx, req.Target, req.Signal); err != nil {
+			return Response{}, err
+		}
+		return Response{OK: true, Message: fmt.Sprintf("proxy %s removed from %s", req.Signal, req.Target)}, nil
+
 	case "incus.snapshots.list":
 		snaps, err := e.incusClient().ListSnapshots(ctx, req.Target)
 		if err != nil {
@@ -274,6 +294,18 @@ func (e SystemExecutor) ExecuteData(ctx context.Context, req Request) (Response,
 
 	default:
 		return Response{}, ErrInvalidAction
+	}
+}
+
+func (e SystemExecutor) ExecuteStream(ctx context.Context, req Request) (io.ReadCloser, error) {
+	if err := ValidateRequest(req); err != nil {
+		return nil, err
+	}
+	switch req.Action {
+	case "incus.backup.export":
+		return e.incusClient().ExportBackup(ctx, req.Target, req.Signal)
+	default:
+		return nil, ErrInvalidAction
 	}
 }
 
@@ -375,6 +407,23 @@ func (s *Server) handleConn(ctx context.Context, conn *net.UnixConn) {
 	_ = conn.SetDeadline(time.Now().Add(timeout + 5*time.Second))
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+
+	if req.Action == "incus.backup.export" {
+		streamExec, ok := s.exec.(StreamExecutor)
+		if !ok {
+			writeResp(conn, Response{OK: false, Error: "streaming not supported"})
+			return
+		}
+		rc, err := streamExec.ExecuteStream(runCtx, req)
+		if err != nil {
+			writeResp(conn, Response{OK: false, Error: err.Error()})
+			return
+		}
+		defer rc.Close()
+		writeResp(conn, Response{OK: true, Message: "application/octet-stream"})
+		_, _ = io.Copy(conn, rc)
+		return
+	}
 
 	if dataExec, ok := s.exec.(DataExecutor); ok {
 		resp, err := dataExec.ExecuteData(runCtx, req)

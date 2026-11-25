@@ -4,18 +4,26 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 const (
 	defaultEvalInterval = 30 * time.Second
 	metricLookback      = 5 * time.Minute
+	notifyQueueSize     = 64
+	notifyTimeout       = 15 * time.Second
 )
 
 type ruleState struct {
 	pendingSince time.Time
 	firing       bool
 	triggeredAt  int64
+}
+
+type notifyJob struct {
+	event    Event
+	channels []Channel
 }
 
 type Evaluator struct {
@@ -26,6 +34,9 @@ type Evaluator struct {
 	now      func() time.Time
 	mu       sync.Mutex
 	states   map[int64]*ruleState
+
+	notifyCh     chan notifyJob
+	workerActive atomic.Bool
 }
 
 func NewEvaluator(store *Store, notifier *Notifier, logger *slog.Logger) *Evaluator {
@@ -36,10 +47,23 @@ func NewEvaluator(store *Store, notifier *Notifier, logger *slog.Logger) *Evalua
 		interval: defaultEvalInterval,
 		now:      time.Now,
 		states:   make(map[int64]*ruleState),
+		notifyCh: make(chan notifyJob, notifyQueueSize),
 	}
 }
 
 func (e *Evaluator) Run(ctx context.Context) error {
+	var wg sync.WaitGroup
+	e.workerActive.Store(true)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		e.runNotifyWorker(ctx)
+	}()
+	defer func() {
+		e.workerActive.Store(false)
+		wg.Wait()
+	}()
+
 	ticker := time.NewTicker(e.interval)
 	defer ticker.Stop()
 
@@ -52,6 +76,65 @@ func (e *Evaluator) Run(ctx context.Context) error {
 				e.logger.Warn("alert evaluation failed", slog.String("error", err.Error()))
 			}
 		}
+	}
+}
+
+func (e *Evaluator) runNotifyWorker(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case job := <-e.notifyCh:
+			if e.notifier == nil {
+				continue
+			}
+			sendCtx, cancel := context.WithTimeout(ctx, notifyTimeout)
+			notifyErr := e.notifier.NotifyAll(sendCtx, job.channels, job.event)
+			cancel()
+			if notifyErr != "" && job.event.ID > 0 {
+				updateCtx, uCancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+				if err := e.store.UpdateEventNotifyError(updateCtx, job.event.ID, notifyErr); err != nil && e.logger != nil {
+					e.logger.Warn("update alert notify_error failed", slog.String("error", err.Error()))
+				}
+				uCancel()
+			}
+		}
+	}
+}
+
+func (e *Evaluator) dispatchEvent(ctx context.Context, channels []Channel, ev Event) {
+	if e.notifier == nil || len(channels) == 0 {
+		if _, err := e.store.RecordEvent(ctx, ev); err != nil && e.logger != nil {
+			e.logger.Warn("record alert event failed", slog.String("error", err.Error()))
+		}
+		return
+	}
+
+	if e.workerActive.Load() {
+		recorded, err := e.store.RecordEvent(ctx, ev)
+		if err != nil {
+			if e.logger != nil {
+				e.logger.Warn("record alert event failed", slog.String("error", err.Error()))
+			}
+			return
+		}
+		chCopy := make([]Channel, len(channels))
+		copy(chCopy, channels)
+		select {
+		case e.notifyCh <- notifyJob{event: recorded, channels: chCopy}:
+		default:
+			if e.logger != nil {
+				e.logger.Warn("alert webhook queue full; dropping notification", slog.Int64("event_id", recorded.ID))
+			}
+			_ = e.store.UpdateEventNotifyError(ctx, recorded.ID, "notification queue full")
+		}
+		return
+	}
+
+	// Synchronous path for direct EvaluateOnce calls in tests/CLI.
+	ev.NotifyError = e.notifier.NotifyAll(ctx, channels, ev)
+	if _, err := e.store.RecordEvent(ctx, ev); err != nil && e.logger != nil {
+		e.logger.Warn("record alert event failed", slog.String("error", err.Error()))
 	}
 }
 
@@ -116,12 +199,7 @@ func (e *Evaluator) EvaluateOnce(ctx context.Context) error {
 					Threshold:     rule.Threshold,
 					TriggeredAtMs: st.triggeredAt,
 				}
-				if e.notifier != nil {
-					ev.NotifyError = e.notifier.NotifyAll(ctx, channels, ev)
-				}
-				if _, err := e.store.RecordEvent(ctx, ev); err != nil && e.logger != nil {
-					e.logger.Warn("record firing alert failed", slog.String("error", err.Error()))
-				}
+				e.dispatchEvent(ctx, channels, ev)
 			}
 		} else {
 			st.pendingSince = time.Time{}
@@ -139,12 +217,7 @@ func (e *Evaluator) EvaluateOnce(ctx context.Context) error {
 					TriggeredAtMs: st.triggeredAt,
 					ResolvedAtMs:  &resolvedAt,
 				}
-				if e.notifier != nil {
-					ev.NotifyError = e.notifier.NotifyAll(ctx, channels, ev)
-				}
-				if _, err := e.store.RecordEvent(ctx, ev); err != nil && e.logger != nil {
-					e.logger.Warn("record resolved alert failed", slog.String("error", err.Error()))
-				}
+				e.dispatchEvent(ctx, channels, ev)
 			}
 		}
 	}

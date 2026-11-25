@@ -130,6 +130,9 @@ func New(cfg config.HTTPConfig, queries *history.QueryService, sessions *auth.St
 		http.MethodPost: a.createIncusBackup,
 	})
 	a.route(http.MethodDelete, apiPath+"/incus/instances/{name}/backups/{backup}", true, a.deleteIncusBackup)
+	a.route(http.MethodGet, apiPath+"/incus/instances/{name}/backups/{backup}/export", true, a.exportIncusBackup)
+	a.route(http.MethodPost, apiPath+"/incus/instances/{name}/proxies", true, a.addIncusProxy)
+	a.route(http.MethodDelete, apiPath+"/incus/instances/{name}/proxies/{device}", true, a.removeIncusProxy)
 	a.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if a.ui != nil && r.URL.Path != "/api" && !strings.HasPrefix(r.URL.Path, "/api/") {
 			a.ui.ServeHTTP(w, r)
@@ -296,6 +299,8 @@ func (a *API) routeMethods(routePath string, private bool, handlers map[string]h
 				} else {
 					timeout = 75 * time.Second
 				}
+			} else if strings.HasSuffix(routePath, "/export") {
+				timeout = 10*time.Minute + 10*time.Second
 			} else {
 				timeout = 15 * time.Second
 			}
