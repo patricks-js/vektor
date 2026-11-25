@@ -429,6 +429,9 @@ func (c *Client) CreateInstance(ctx context.Context, req CreateInstanceRequest) 
 	alias := strings.TrimSpace(req.Image)
 	protocol := strings.TrimSpace(req.Protocol)
 	server := strings.TrimSpace(req.Server)
+	if !ValidImageServer(server) {
+		return errors.New("image server must be a public https:// URL")
+	}
 
 	var source map[string]any
 	switch {
@@ -446,9 +449,6 @@ func (c *Client) CreateInstance(ctx context.Context, req CreateInstanceRequest) 
 		}
 		if server == "" {
 			server = defaultOCIServer
-		}
-		if !strings.HasPrefix(server, "https://") && !strings.HasPrefix(server, "http://") {
-			return errors.New("OCI server must start with https:// or http://")
 		}
 		// Docker Hub official images require the library/ prefix for Incus OCI pulls.
 		if server == defaultOCIServer && !strings.Contains(alias, "/") {

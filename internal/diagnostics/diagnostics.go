@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -185,16 +186,27 @@ func (r *Runner) queryIncusStatus(ctx context.Context) (incus.Status, error) {
 	return st, nil
 }
 
-// Run executes all diagnostic checks and aggregates the overall status.
+// Run executes all diagnostic checks concurrently and aggregates the overall status.
 func (r *Runner) Run(ctx context.Context) Report {
-	checks := []Check{
-		r.checkClock(ctx),
-		r.checkDNS(ctx),
-		r.checkDatabase(ctx),
-		r.checkJournald(ctx),
-		r.checkCtl(ctx),
-		r.checkIncus(ctx),
+	fns := []func(context.Context) Check{
+		r.checkClock,
+		r.checkDNS,
+		r.checkDatabase,
+		r.checkJournald,
+		r.checkCtl,
+		r.checkIncus,
 	}
+	checks := make([]Check, len(fns))
+	var wg sync.WaitGroup
+	wg.Add(len(fns))
+	for i, fn := range fns {
+		go func(idx int, run func(context.Context) Check) {
+			defer wg.Done()
+			checks[idx] = run(ctx)
+		}(i, fn)
+	}
+	wg.Wait()
+
 	overall := StatusOK
 	for _, c := range checks {
 		if c.Status == StatusFail {

@@ -322,7 +322,7 @@ func NewServer(allowedUIDs []uint32, exec Executor, idleTimeout time.Duration) *
 		allowed[uid] = true
 	}
 	if exec == nil {
-		exec = SystemExecutor{}
+		exec = SystemExecutor{Incus: incus.NewClient(os.Getenv("VEKTOR_INCUS_SOCKET"))}
 	}
 	return &Server{
 		allowedUIDs: allowed,

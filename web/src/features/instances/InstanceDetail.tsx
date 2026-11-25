@@ -157,6 +157,8 @@ export function InstanceDetail() {
   const [confirmRestoreSnap, setConfirmRestoreSnap] = useState<string | null>(null)
   const [confirmDeleteSnap, setConfirmDeleteSnap] = useState<string | null>(null)
   const [confirmDeleteBackup, setConfirmDeleteBackup] = useState<string | null>(null)
+  const [confirmRemoveProxy, setConfirmRemoveProxy] = useState<string | null>(null)
+  const [confirmRemoveEnv, setConfirmRemoveEnv] = useState<string | null>(null)
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'critical'; text: string } | null>(null)
 
   // Resource edit state
@@ -641,7 +643,7 @@ export function InstanceDetail() {
                             <td {...stylex.props(tableStyles.td)}>
                               <Button variant="danger" disabled={removeProxyMutation.isPending}
                                 aria-label={`Remover porta ${p.name}`}
-                                onClick={() => removeProxyMutation.mutate(p.name)}>
+                                onClick={() => setConfirmRemoveProxy(p.name)}>
                                 <Trash2 size={13} aria-hidden />
                               </Button>
                             </td>
@@ -685,7 +687,7 @@ export function InstanceDetail() {
                             <td {...stylex.props(tableStyles.td)}>
                               <Button variant="danger" disabled={envSaveMutation.isPending}
                                 aria-label={`Remover variável ${k}`}
-                                onClick={() => envSaveMutation.mutate({ unset_env: [k] })}>
+                                onClick={() => setConfirmRemoveEnv(k)}>
                                 <Trash2 size={13} aria-hidden />
                               </Button>
                             </td>
@@ -970,6 +972,34 @@ export function InstanceDetail() {
             if (target) deleteBackupMutation.mutate(target)
           }}>
             Excluir
+          </Button>
+        </div>
+      </Modal>
+
+      <Modal open={Boolean(confirmRemoveProxy)} title={`Remover encaminhamento "${confirmRemoveProxy ?? ''}"?`} preventClose={removeProxyMutation.isPending} onClose={() => setConfirmRemoveProxy(null)}>
+        <p {...stylex.props(layout.small)}>A porta exposta no host deixará de encaminhar tráfego para esta instância.</p>
+        <div {...stylex.props(layout.row)}>
+          <Button variant="outline" disabled={removeProxyMutation.isPending} onClick={() => setConfirmRemoveProxy(null)}>Cancelar</Button>
+          <Button variant="danger" busy={removeProxyMutation.isPending} onClick={() => {
+            const target = confirmRemoveProxy
+            setConfirmRemoveProxy(null)
+            if (target) removeProxyMutation.mutate(target)
+          }}>
+            Remover porta
+          </Button>
+        </div>
+      </Modal>
+
+      <Modal open={Boolean(confirmRemoveEnv)} title={`Remover variável "${confirmRemoveEnv ?? ''}"?`} preventClose={envSaveMutation.isPending} onClose={() => setConfirmRemoveEnv(null)}>
+        <p {...stylex.props(layout.small)}>A variável de ambiente será removida da configuração da instância.</p>
+        <div {...stylex.props(layout.row)}>
+          <Button variant="outline" disabled={envSaveMutation.isPending} onClick={() => setConfirmRemoveEnv(null)}>Cancelar</Button>
+          <Button variant="danger" busy={envSaveMutation.isPending} onClick={() => {
+            const target = confirmRemoveEnv
+            setConfirmRemoveEnv(null)
+            if (target) envSaveMutation.mutate({ unset_env: [target] })
+          }}>
+            Remover variável
           </Button>
         </div>
       </Modal>

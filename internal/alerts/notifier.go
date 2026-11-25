@@ -30,7 +30,12 @@ type Notifier struct {
 
 func NewNotifier() *Notifier {
 	return &Notifier{
-		client: &http.Client{Timeout: 5 * time.Second},
+		client: &http.Client{
+			Timeout: 5 * time.Second,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 	}
 }
 

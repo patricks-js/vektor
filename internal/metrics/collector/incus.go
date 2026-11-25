@@ -13,6 +13,11 @@ import (
 	"vektor/internal/metrics"
 )
 
+const (
+	defaultIncusPollInterval = 30 * time.Second
+	incusUnavailableBackoff  = 5 * time.Minute
+)
+
 type incusCPUBaseline struct {
 	pid   int64
 	cpuNs int64
@@ -22,40 +27,56 @@ type incusCPUBaseline struct {
 // IncusCollector samples per-instance resource usage from Incus via vektor-ctl,
 // reconciles instance identities in host.Registry, and emits historical metrics.
 type IncusCollector struct {
-	clock    metrics.Clock
-	registry *host.Registry
-	listFn   func(context.Context) ([]incus.Instance, error)
+	clock        metrics.Clock
+	registry     *host.Registry
+	listFn       func(context.Context) ([]incus.Instance, bool, error)
+	pollInterval time.Duration
 
-	mu        sync.Mutex
-	baselines map[string]incusCPUBaseline
+	mu           sync.Mutex
+	baselines    map[string]incusCPUBaseline
+	lastAttempt  time.Duration
+	backoffUntil time.Duration
+	hasAttempted bool
 }
 
 // NewIncusCollector constructs a collector backed by vektor-ctl.socket.
 func NewIncusCollector(clk metrics.Clock, registry *host.Registry, ctlClient *ctl.Client) *IncusCollector {
-	listFn := func(ctx context.Context) ([]incus.Instance, error) {
+	listFn := func(ctx context.Context) ([]incus.Instance, bool, error) {
 		if ctlClient == nil {
-			return nil, nil
+			return nil, false, nil
 		}
 		resp, err := ctlClient.Do(ctx, ctl.Request{Action: "incus.instances.list"})
 		if err != nil || !resp.OK {
-			// Incus is optional; skip silently when unavailable.
-			return nil, nil
+			// Incus or vektor-ctl is unavailable; signal caller to back off.
+			return nil, false, nil
 		}
 		var instances []incus.Instance
 		if err := json.Unmarshal(resp.Data, &instances); err != nil {
-			return nil, nil
+			return nil, false, nil
 		}
-		return instances, nil
+		return instances, true, nil
 	}
-	return NewIncusCollectorWithFunc(clk, registry, listFn)
+	col := NewIncusCollectorWithFunc(clk, registry, func(ctx context.Context) ([]incus.Instance, error) {
+		items, _, err := listFn(ctx)
+		return items, err
+	})
+	col.listFn = listFn
+	col.pollInterval = defaultIncusPollInterval
+	return col
 }
 
 // NewIncusCollectorWithFunc constructs an IncusCollector with an injectable instance lister for testing.
 func NewIncusCollectorWithFunc(clk metrics.Clock, registry *host.Registry, listFn func(context.Context) ([]incus.Instance, error)) *IncusCollector {
 	return &IncusCollector{
-		clock:     clk,
-		registry:  registry,
-		listFn:    listFn,
+		clock:    clk,
+		registry: registry,
+		listFn: func(ctx context.Context) ([]incus.Instance, bool, error) {
+			items, err := listFn(ctx)
+			if err != nil {
+				return nil, false, err
+			}
+			return items, true, nil
+		},
 		baselines: make(map[string]incusCPUBaseline),
 	}
 }
@@ -64,12 +85,30 @@ func (c *IncusCollector) Collect(ctx context.Context, now time.Time) (metrics.Ra
 	if c == nil || c.listFn == nil {
 		return metrics.RawSnapshot{}, nil
 	}
-	instances, err := c.listFn(ctx)
+	mono := c.clock.Monotonic()
+	c.mu.Lock()
+	if c.backoffUntil > 0 && mono < c.backoffUntil {
+		c.mu.Unlock()
+		return metrics.RawSnapshot{}, nil
+	}
+	if c.hasAttempted && c.pollInterval > 0 && mono-c.lastAttempt < c.pollInterval {
+		c.mu.Unlock()
+		return metrics.RawSnapshot{}, nil
+	}
+	c.hasAttempted = true
+	c.lastAttempt = mono
+	c.mu.Unlock()
+
+	instances, available, err := c.listFn(ctx)
+	if !available {
+		c.mu.Lock()
+		c.backoffUntil = mono + incusUnavailableBackoff
+		c.mu.Unlock()
+		return metrics.RawSnapshot{}, nil
+	}
 	if err != nil || len(instances) == 0 {
 		return metrics.RawSnapshot{}, nil
 	}
-
-	mono := c.clock.Monotonic()
 	if c.registry != nil {
 		discovered := make([]host.DiscoveredResource, 0, len(instances))
 		for _, inst := range instances {

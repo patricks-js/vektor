@@ -6,6 +6,22 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o 
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-11-25
+
+### Fixed
+- **Vazamento de sockets no `vektor-ctl`:** inicializado um único `*incus.Client` compartilhado no startup (`cmd/vektor-ctl/main.go` e `internal/ctl/server.go`), eliminando criação de `http.Transport` por requisição.
+- **Hardening de SSRF no Incus e em Webhooks:**
+  - `ValidImageServer` agora exige `https://` público e bloqueia `localhost`, loopback, IPs privados e link-local tanto no `httpapi` quanto no `internal/incus`.
+  - `ValidateWebhookURL` bloqueia IPs link-local/metadata (`169.254.0.0/16`, `fe80::/10`, `0.0.0.0`) e `Notifier` não segue redirecionamentos HTTP (`http.ErrUseLastResponse`).
+- **Isolamento do pool HTTP para operações longas:** criação de instâncias/backups e streaming de exportação agora usam canal próprio (`longOps`, 4 slots) em vez de disputar o pool de 8 slots (`requests`) das leituras do dashboard.
+- **Diagnósticos em paralelo (`GET /api/v1/diagnostics`):** os 6 checks agora executam concorrentemente com `sync.WaitGroup`, evitando timeouts de 8s quando serviços do host estão degradados.
+- **Validação estrita de portas em `ValidProxyAddr`:** substituído regex por `net.SplitHostPort` + `netip.ParseAddr` + faixa `1–65535`.
+- **Fail-fast no `--allow-user` do `vektor-ctl`:** erro de `user.Lookup` agora aborta o startup com mensagem clara em vez de iniciar silenciosamente apenas com UID 0.
+- **Coletor Incus amigável ao `--idle-timeout`:** intervalo mínimo de 30s (alinhado ao bucket raw) e backoff de 5 minutos quando o Incus não está disponível no host.
+- **Auditoria de download de backups:** `GET /api/v1/incus/instances/{name}/backups/{backup}/export` agora registra a exportação (sucesso/bytes ou erro) em `audit_log`.
+- **UI mais segura e limpa:** confirmação via `<Modal>` antes de remover portas proxy ou variáveis de ambiente em `InstanceDetail`, e estado amigável de espera na aba *Métricas* para instâncias recém-criadas (`ChartPanel`).
+- **Refatoração & testes:** lógica de erro/auditoria unificada em `runControl` (`actions.go`/`incus.go`) e nova cobertura E2E para `PATCH`, proxies, rejeição de SSRF e streaming `DoStream` em `tests/integration/incus_http_test.go`.
+
 ## [0.9.0] - 2026-11-25
 
 ### Added

@@ -209,6 +209,7 @@ export function ChartPanel({ title, subtitle, resourceId, metric, color = 'cpu',
   const step = resolution?.key === key ? resolution.step : 'auto'
   const query = useHistory(resourceId, metric, range, step)
   const pointLimit = query.error instanceof ApiError && query.error.code === 'point_limit'
+  const waitingIncusSample = Boolean(resourceId?.startsWith('incus:')) && query.error instanceof ApiError && query.error.code === 'resource_not_found'
 
   return (
     <Panel title={title} subtitle={subtitle} action={<Source>Histórico</Source>}>
@@ -216,6 +217,7 @@ export function ChartPanel({ title, subtitle, resourceId, metric, color = 'cpu',
         <div {...stylex.props(s.empty, layout.stack)}>
           {!resourceId ? (resourcePending ? <Loading label="Aguardando inventário…" /> : <Empty>Inventário indisponível para consultar esta série.</Empty>)
             : query.isPending ? <Loading label="Consultando histórico…" />
+            : waitingIncusSample ? <Empty>Aguardando primeira coleta histórica desta instância (atualiza a cada 30s).</Empty>
             : pointLimit ? <>
               <Empty>A janela solicitada excede o limite de pontos. Selecione um período menor ou amplie a resolução.</Empty>
               {step !== '3600' && <div><Button onClick={() => setResolution({ key, step: '3600' })}>Usar resolução de 1h</Button></div>}

@@ -56,6 +56,7 @@ type API struct {
 	mux      *http.ServeMux
 	ui       http.Handler
 	requests chan struct{}
+	longOps  chan struct{}
 	streams  chan struct{}
 	password chan struct{}
 	logins   loginLimiter
@@ -67,6 +68,7 @@ func New(cfg config.HTTPConfig, queries *history.QueryService, sessions *auth.St
 		local:    cfg.PublicOrigin == "" && loopbackHost(cfg.ListenAddr),
 		mux:      http.NewServeMux(),
 		requests: make(chan struct{}, 8),
+		longOps:  make(chan struct{}, 4),
 		streams:  make(chan struct{}, cfg.MaxLiveClients),
 		password: make(chan struct{}, 1),
 	}
@@ -278,9 +280,14 @@ func (a *API) routeMethods(routePath string, private bool, handlers map[string]h
 			return
 		}
 
+		isLongOp := (r.Method == http.MethodPost && (routePath == apiPath+"/incus/instances" || routePath == apiPath+"/incus/instances/{name}/backups")) ||
+			(r.Method == http.MethodGet && strings.HasSuffix(routePath, "/export"))
+
 		slots := a.requests
 		if isStream {
 			slots = a.streams
+		} else if isLongOp {
+			slots = a.longOps
 		}
 		select {
 		case slots <- struct{}{}:
@@ -293,14 +300,10 @@ func (a *API) routeMethods(routePath string, private bool, handlers map[string]h
 
 		timeout := requestTimeout
 		if strings.HasPrefix(routePath, apiPath+"/incus/") {
-			if isMutation {
-				if r.Method == http.MethodPost && (routePath == apiPath+"/incus/instances" || routePath == apiPath+"/incus/instances/{name}/backups") {
-					timeout = 10*time.Minute + 10*time.Second
-				} else {
-					timeout = 75 * time.Second
-				}
-			} else if strings.HasSuffix(routePath, "/export") {
+			if isLongOp {
 				timeout = 10*time.Minute + 10*time.Second
+			} else if isMutation {
+				timeout = 75 * time.Second
 			} else {
 				timeout = 15 * time.Second
 			}

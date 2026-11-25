@@ -131,9 +131,29 @@ func (a *API) createIncusInstance(w http.ResponseWriter, r *http.Request) {
 		invalidParams(w, "type must be container or virtual-machine")
 		return
 	}
+	if body.Protocol != "" && body.Protocol != "simplestreams" && body.Protocol != "oci" {
+		invalidParams(w, "protocol must be simplestreams or oci")
+		return
+	}
+	if !incus.ValidImageServer(body.Server) {
+		invalidParams(w, "server must be a public https:// URL")
+		return
+	}
 	if !incus.ValidImageAlias(body.Image) {
 		invalidParams(w, "Invalid image alias")
 		return
+	}
+	for k := range body.Env {
+		if !incus.ValidEnvKey(k) {
+			invalidParams(w, "Invalid environment variable name")
+			return
+		}
+	}
+	for _, p := range body.Proxies {
+		if !incus.ValidDeviceName(p.Name) || !incus.ValidProxyAddr(p.Listen) || !incus.ValidProxyAddr(p.Connect) {
+			invalidParams(w, "Invalid proxy device configuration")
+			return
+		}
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -357,35 +377,20 @@ func (a *API) execIncusInstance(w http.ResponseWriter, r *http.Request) {
 		invalidParams(w, "Invalid exec payload")
 		return
 	}
-	if a.ctl == nil {
-		writeError(w, http.StatusServiceUnavailable, "ctl_unavailable", "vektor-ctl helper is not configured")
-		return
-	}
-	resp, err := a.ctl.Do(r.Context(), ctl.Request{
-		Action:  "incus.instance.exec",
-		Target:  name,
-		Payload: payload,
-	})
-	if errors.Is(err, ctl.ErrUnavailable) {
-		a.recordAudit(r, "incus.instance.exec", "incus:"+name, "error", "helper socket unavailable")
-		writeError(w, http.StatusServiceUnavailable, "ctl_unavailable", "vektor-ctl.socket is not active on this host")
-		return
-	}
-	if err != nil {
-		a.recordAudit(r, "incus.instance.exec", "incus:"+name, "error", err.Error())
-		writeError(w, http.StatusBadGateway, "ctl_error", "Failed to communicate with vektor-ctl")
-		return
-	}
-	if !resp.OK {
-		a.recordAudit(r, "incus.instance.exec", "incus:"+name, "error", resp.Error)
-		writeError(w, http.StatusUnprocessableEntity, "action_failed", resp.Error)
-		return
-	}
 	auditCmd := body.Command
 	if len(auditCmd) > 120 {
 		auditCmd = auditCmd[:120] + "…"
 	}
-	a.recordAudit(r, "incus.instance.exec", "incus:"+name, "ok", auditCmd+" ("+resp.Message+")")
+	resp, ok := a.runControl(w, r, ctl.Request{
+		Action:  "incus.instance.exec",
+		Target:  name,
+		Payload: payload,
+	}, "incus:"+name, func(resp ctl.Response) string {
+		return auditCmd + " (" + resp.Message + ")"
+	})
+	if !ok {
+		return
+	}
 	var result incus.ExecResult
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
 		writeError(w, http.StatusBadGateway, "incus_error", "Malformed exec result")
@@ -514,11 +519,14 @@ func (a *API) exportIncusBackup(w http.ResponseWriter, r *http.Request) {
 		Target: name,
 		Signal: backup,
 	})
+	targetLabel := "incus:" + name + "/backup:" + backup
 	if errors.Is(err, ctl.ErrUnavailable) {
+		a.recordAudit(r, "incus.backup.export", targetLabel, "error", "helper socket unavailable")
 		writeError(w, http.StatusServiceUnavailable, "ctl_unavailable", "vektor-ctl.socket is not active on this host")
 		return
 	}
 	if err != nil {
+		a.recordAudit(r, "incus.backup.export", targetLabel, "error", err.Error())
 		writeError(w, http.StatusBadGateway, "incus_error", err.Error())
 		return
 	}
@@ -528,7 +536,12 @@ func (a *API) exportIncusBackup(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
 	w.WriteHeader(http.StatusOK)
-	_, _ = io.Copy(w, stream)
+	written, copyErr := io.Copy(w, stream)
+	if copyErr != nil {
+		a.recordAudit(r, "incus.backup.export", targetLabel, "error", fmt.Sprintf("stream interrupted after %d bytes: %v", written, copyErr))
+		return
+	}
+	a.recordAudit(r, "incus.backup.export", targetLabel, "ok", fmt.Sprintf("exported %s (%d bytes)", filename, written))
 }
 
 func (a *API) addIncusProxy(w http.ResponseWriter, r *http.Request) {

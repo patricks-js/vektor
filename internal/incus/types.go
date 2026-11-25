@@ -4,7 +4,12 @@ package incus
 
 import (
 	"errors"
+	"net"
+	"net/netip"
+	"net/url"
 	"regexp"
+	"strconv"
+	"strings"
 )
 
 const DefaultSocketPath = "/var/lib/incus/unix.socket"
@@ -18,7 +23,6 @@ var (
 	imageAliasRe   = regexp.MustCompile(`^[a-zA-Z0-9._:/@-]{1,256}$`)
 	deviceNameRe   = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$`)
 	envKeyRe       = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
-	proxyAddrRe    = regexp.MustCompile(`^(tcp|udp):[0-9a-fA-F.:\[\]]+:[0-9]{1,5}$`)
 )
 
 func ValidInstanceName(name string) bool {
@@ -42,7 +46,51 @@ func ValidEnvKey(key string) bool {
 }
 
 func ValidProxyAddr(addr string) bool {
-	return proxyAddrRe.MatchString(addr)
+	var rest string
+	switch {
+	case strings.HasPrefix(addr, "tcp:"):
+		rest = strings.TrimPrefix(addr, "tcp:")
+	case strings.HasPrefix(addr, "udp:"):
+		rest = strings.TrimPrefix(addr, "udp:")
+	default:
+		return false
+	}
+	hostStr, portStr, err := net.SplitHostPort(rest)
+	if err != nil {
+		return false
+	}
+	if _, err := netip.ParseAddr(hostStr); err != nil {
+		return false
+	}
+	port, err := strconv.Atoi(portStr)
+	return err == nil && port >= 1 && port <= 65535
+}
+
+// ValidImageServer ensures image pull servers use HTTPS and do not target loopback,
+// link-local, or private IP literals (mitigating SSRF through incusd).
+func ValidImageServer(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return true
+	}
+	if len(raw) > 256 {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
+		return false
+	}
+	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	if host == "" || host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return false
+	}
+	if ip, err := netip.ParseAddr(host); err == nil {
+		ip = ip.Unmap()
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
+			return false
+		}
+	}
+	return true
 }
 
 type ProxyDevice struct {

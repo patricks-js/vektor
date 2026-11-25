@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"math"
+	"net/netip"
 	"net/url"
 	"strings"
 	"time"
@@ -123,8 +124,14 @@ func ValidateWebhookURL(raw string) error {
 		return ErrInvalid
 	}
 	u, err := url.Parse(raw)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {
 		return ErrInvalid
+	}
+	if ip, err := netip.ParseAddr(u.Hostname()); err == nil {
+		ip = ip.Unmap()
+		if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
+			return ErrInvalid
+		}
 	}
 	return nil
 }

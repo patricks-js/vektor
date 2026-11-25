@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"vektor/internal/ctl"
+	"vektor/internal/incus"
 )
 
 var version = "dev"
@@ -50,10 +51,16 @@ func run(ctx context.Context, args []string) error {
 	}
 
 	allowedUIDs := []uint32{0} // root
-	if u, err := user.Lookup(allowedUser); err == nil {
-		if uid, err := strconv.ParseUint(u.Uid, 10, 32); err == nil {
-			allowedUIDs = append(allowedUIDs, uint32(uid))
+	if allowedUser != "" {
+		u, err := user.Lookup(allowedUser)
+		if err != nil {
+			return fmt.Errorf("lookup --allow-user %q: %w", allowedUser, err)
 		}
+		uid, err := strconv.ParseUint(u.Uid, 10, 32)
+		if err != nil {
+			return fmt.Errorf("parse uid for %q: %w", allowedUser, err)
+		}
+		allowedUIDs = append(allowedUIDs, uint32(uid))
 	}
 
 	ln, err := acquireListener(socketPath)
@@ -62,7 +69,8 @@ func run(ctx context.Context, args []string) error {
 	}
 	defer ln.Close()
 
-	srv := ctl.NewServer(allowedUIDs, ctl.SystemExecutor{}, idleTimeout)
+	incusClient := incus.NewClient(os.Getenv("VEKTOR_INCUS_SOCKET"))
+	srv := ctl.NewServer(allowedUIDs, ctl.SystemExecutor{Incus: incusClient}, idleTimeout)
 	return srv.Serve(ctx, ln)
 }
 

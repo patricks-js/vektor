@@ -329,3 +329,31 @@ func TestClientOCIProxiesAndBackupExport(t *testing.T) {
 		t.Fatalf("unexpected export bytes: %q", string(buf[:n]))
 	}
 }
+
+func TestValidationHelpers(t *testing.T) {
+	goodProxies := []string{"tcp:0.0.0.0:8080", "udp:127.0.0.1:53", "tcp:[::1]:443"}
+	for _, p := range goodProxies {
+		if !ValidProxyAddr(p) {
+			t.Errorf("expected valid proxy addr %q", p)
+		}
+	}
+	badProxies := []string{"tcp:0.0.0.0:0", "tcp:0.0.0.0:65536", "tcp:0.0.0.0:99999", "tcp:::::80", "http:0.0.0.0:80"}
+	for _, p := range badProxies {
+		if ValidProxyAddr(p) {
+			t.Errorf("expected invalid proxy addr %q", p)
+		}
+	}
+
+	goodServers := []string{"", "https://registry-1.docker.io", "https://ghcr.io", "https://images.linuxcontainers.org"}
+	for _, s := range goodServers {
+		if !ValidImageServer(s) {
+			t.Errorf("expected valid image server %q", s)
+		}
+	}
+	badServers := []string{"http://registry-1.docker.io", "https://127.0.0.1:5000", "https://169.254.169.254", "https://10.0.0.5", "https://localhost"}
+	for _, s := range badServers {
+		if ValidImageServer(s) {
+			t.Errorf("expected invalid image server %q", s)
+		}
+	}
+}

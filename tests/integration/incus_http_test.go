@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -62,6 +63,13 @@ func TestIncusEndToEndThroughCtlAndAudit(t *testing.T) {
 	incusMux.HandleFunc("PUT /1.0/instances/ubuntu-vm/state", func(w http.ResponseWriter, r *http.Request) {
 		stateCalls++
 		_ = json.NewEncoder(w).Encode(map[string]any{"type": "sync", "status_code": 200})
+	})
+	incusMux.HandleFunc("PATCH /1.0/instances/app-ct", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"type": "sync", "status_code": 200})
+	})
+	incusMux.HandleFunc("GET /1.0/instances/app-ct/backups/daily/export", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write([]byte("ARCHIVE-STREAM-PAYLOAD"))
 	})
 	incusSrv := &http.Server{Handler: incusMux}
 	go func() { _ = incusSrv.Serve(incusLn) }()
@@ -177,5 +185,48 @@ func TestIncusEndToEndThroughCtlAndAudit(t *testing.T) {
 	entries, err := auditStore.List(ctx, 10)
 	if err != nil || len(entries) == 0 || entries[0].Action != "incus.instance.start" || entries[0].Target != "incus:ubuntu-vm" {
 		t.Fatalf("expected audit entry for incus.instance.start, got %+v err=%v", entries, err)
+	}
+
+	// SSRF protection: reject internal/non-HTTPS image server on create
+	badSrvResp := doReq(http.MethodPost, "/api/v1/incus/instances", `{"name":"evil-ct","type":"container","protocol":"oci","server":"http://169.254.169.254","image":"nginx:alpine"}`)
+	badSrvResp.Body.Close()
+	if badSrvResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for SSRF image server, got %d", badSrvResp.StatusCode)
+	}
+
+	// Invalid proxy port 99999 rejected
+	badProxyResp := doReq(http.MethodPost, "/api/v1/incus/instances/app-ct/proxies", `{"name":"bad","listen":"tcp:0.0.0.0:99999","connect":"tcp:127.0.0.1:80"}`)
+	badProxyResp.Body.Close()
+	if badProxyResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for out-of-range proxy port, got %d", badProxyResp.StatusCode)
+	}
+
+	// Valid proxy add + remove + PATCH update
+	addProxyResp := doReq(http.MethodPost, "/api/v1/incus/instances/app-ct/proxies", `{"name":"http","listen":"tcp:0.0.0.0:8080","connect":"tcp:127.0.0.1:80"}`)
+	addProxyResp.Body.Close()
+	if addProxyResp.StatusCode != http.StatusOK {
+		t.Fatalf("add proxy failed: HTTP %d", addProxyResp.StatusCode)
+	}
+	delProxyResp := doReq(http.MethodDelete, "/api/v1/incus/instances/app-ct/proxies/http", "")
+	delProxyResp.Body.Close()
+	if delProxyResp.StatusCode != http.StatusOK {
+		t.Fatalf("remove proxy failed: HTTP %d", delProxyResp.StatusCode)
+	}
+	patchResp := doReq(http.MethodPatch, "/api/v1/incus/instances/app-ct", `{"cpu_limit":"2","env":{"TZ":"UTC"}}`)
+	patchResp.Body.Close()
+	if patchResp.StatusCode != http.StatusOK {
+		t.Fatalf("patch instance failed: HTTP %d", patchResp.StatusCode)
+	}
+
+	// Streaming backup export through vektor-ctl DoStream + audit verification
+	expResp := doReq(http.MethodGet, "/api/v1/incus/instances/app-ct/backups/daily/export", "")
+	defer expResp.Body.Close()
+	rawArchive, _ := io.ReadAll(expResp.Body)
+	if expResp.StatusCode != http.StatusOK || string(rawArchive) != "ARCHIVE-STREAM-PAYLOAD" {
+		t.Fatalf("unexpected backup export: HTTP %d body=%q", expResp.StatusCode, string(rawArchive))
+	}
+	entries, err = auditStore.List(ctx, 10)
+	if err != nil || len(entries) == 0 || entries[0].Action != "incus.backup.export" || entries[0].Status != "ok" {
+		t.Fatalf("expected audit entry for incus.backup.export, got %+v err=%v", entries, err)
 	}
 }

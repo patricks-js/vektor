@@ -26,34 +26,46 @@ func (a *API) recordAudit(r *http.Request, action, target, status, detail string
 	_, _ = a.audit.Record(auditCtx, actor, action, target, status, detail)
 }
 
-func (a *API) executeControl(w http.ResponseWriter, r *http.Request, req ctl.Request, targetLabel string) {
+func (a *API) runControl(w http.ResponseWriter, r *http.Request, req ctl.Request, targetLabel string, auditDetail func(ctl.Response) string) (ctl.Response, bool) {
 	if a.ctl == nil {
 		writeError(w, http.StatusServiceUnavailable, "ctl_unavailable", "vektor-ctl helper is not configured")
-		return
+		return ctl.Response{}, false
 	}
 	resp, err := a.ctl.Do(r.Context(), req)
 	if errors.Is(err, ctl.ErrInvalidAction) {
 		invalidParams(w, "Invalid or disallowed action")
-		return
+		return ctl.Response{}, false
 	}
 	if errors.Is(err, ctl.ErrUnavailable) {
 		a.recordAudit(r, req.Action, targetLabel, "error", "helper socket unavailable")
 		writeError(w, http.StatusServiceUnavailable, "ctl_unavailable", "vektor-ctl.socket is not active on this host")
-		return
+		return ctl.Response{}, false
 	}
 	if err != nil {
 		a.recordAudit(r, req.Action, targetLabel, "error", err.Error())
 		writeError(w, http.StatusBadGateway, "ctl_error", "Failed to communicate with vektor-ctl")
-		return
+		return ctl.Response{}, false
 	}
 	if !resp.OK {
 		a.recordAudit(r, req.Action, targetLabel, "error", resp.Error)
 		writeError(w, http.StatusUnprocessableEntity, "action_failed", resp.Error)
-		return
+		return ctl.Response{}, false
 	}
-	a.recordAudit(r, req.Action, targetLabel, "ok", resp.Message)
+	detail := resp.Message
+	if auditDetail != nil {
+		detail = auditDetail(resp)
+	}
+	a.recordAudit(r, req.Action, targetLabel, "ok", detail)
 	if a.mgmt != nil && len(req.Action) > 8 && req.Action[:8] == "service." {
 		a.mgmt.InvalidateServiceCache()
+	}
+	return resp, true
+}
+
+func (a *API) executeControl(w http.ResponseWriter, r *http.Request, req ctl.Request, targetLabel string) {
+	resp, ok := a.runControl(w, r, req, targetLabel, nil)
+	if !ok {
+		return
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
