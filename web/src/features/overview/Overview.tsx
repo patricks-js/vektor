@@ -4,7 +4,8 @@ import { usePreferences } from '../../app/preferences'
 import { Facts, MetricCard } from '../../components/ui/dashboard'
 import { Badge, Button, DetailLink, Empty, ErrorState, Loading, Panel, StatusDot, layout } from '../../components/ui/ui'
 import { useDiagnostics, useHealth, useHost, useResources } from '../../lib/api/queries'
-import type { DiagnosticStatus, ResourceKind } from '../../lib/api/client'
+import type { ResourceKind } from '../../lib/api/client'
+import { DiagnosticCheckCard } from '../diagnostics/DiagnosticsParts'
 import { displayName, metadataText } from '../host/resourceMetadata'
 import { ChartPanel } from '../metrics/ChartPanel'
 import { TemperatureChartPanel } from '../metrics/TemperatureChartPanel'
@@ -51,21 +52,7 @@ const s = stylex.create({
   controls: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
   layoutBtn: { display: { default: 'none', '@media (min-width: 1024px)': 'inline-flex' } },
   checkList: { display: 'grid', gap: 8 },
-  checkItem: {
-    display: 'grid', gap: 4, padding: 12, borderRadius: 'var(--vk-radius-2)',
-    backgroundColor: 'var(--vk-surface-2)', borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--vk-border-subtle)',
-  },
-  checkWarn: { borderColor: 'var(--vk-warning)' },
-  checkFail: { borderColor: 'var(--vk-critical)' },
-  checkHead: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' },
-  checkTitle: { display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, color: 'var(--vk-text-primary)' },
   checkDetail: { fontSize: 12, color: 'var(--vk-text-secondary)', fontFamily: 'var(--vk-mono)', overflowWrap: 'anywhere' },
-  checkHint: { fontSize: 12, color: 'var(--vk-text-secondary)' },
-  cmdBlock: {
-    margin: '4px 0 0', paddingBlock: 6, paddingInline: 10, borderRadius: 'var(--vk-radius-1)',
-    backgroundColor: 'var(--vk-bg)', borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--vk-border-subtle)',
-    fontFamily: 'var(--vk-mono)', fontSize: 11, color: 'var(--vk-text-primary)', overflowX: 'auto',
-  },
 })
 
 function HostSummary() {
@@ -168,12 +155,6 @@ function ResourceSummary({ kind }: { kind: Extract<ResourceKind, 'filesystem' | 
   )
 }
 
-function diagTone(status: DiagnosticStatus): 'success' | 'warning' | 'critical' {
-  if (status === 'fail') return 'critical'
-  if (status === 'warn') return 'warning'
-  return 'success'
-}
-
 function Diagnostics() {
   const query = useHealth()
   const diagQuery = useDiagnostics()
@@ -211,25 +192,7 @@ function Diagnostics() {
           {report && report.checks.length > 0 && (
             <div {...stylex.props(s.checkList)}>
               {report.checks.map(check => (
-                <div
-                  key={check.id}
-                  {...stylex.props(
-                    s.checkItem,
-                    check.status === 'warn' && s.checkWarn,
-                    check.status === 'fail' && s.checkFail,
-                  )}
-                >
-                  <div {...stylex.props(s.checkHead)}>
-                    <span {...stylex.props(s.checkTitle)}>
-                      <StatusDot tone={diagTone(check.status)} />
-                      {check.title}
-                    </span>
-                    <span {...stylex.props(layout.small)}>{check.summary}</span>
-                  </div>
-                  {check.detail && <div {...stylex.props(s.checkDetail)}>{check.detail}</div>}
-                  {check.hint && <div {...stylex.props(s.checkHint)}>{check.hint}</div>}
-                  {check.command && check.status !== 'ok' && <pre {...stylex.props(s.cmdBlock)}>{check.command}</pre>}
-                </div>
+                <DiagnosticCheckCard key={check.id} check={check} />
               ))}
             </div>
           )}

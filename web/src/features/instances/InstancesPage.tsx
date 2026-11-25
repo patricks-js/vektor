@@ -1,10 +1,11 @@
 import * as stylex from '@stylexjs/stylex'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Box, ChevronLeft, ChevronRight, Cpu, HardDrive, Monitor, Network, Pause, Play, Plus, Power, RotateCw, X } from 'lucide-react'
+import { Box, ChevronLeft, ChevronRight, Cpu, FileText, HardDrive, Monitor, Network, Pause, Play, Plus, Power, RotateCw, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Badge, Button, Empty, ErrorState, Loading, Panel, SelectField, StatusDot, TextField, layout, tableStyles } from '../../components/ui/ui'
 import { useSession } from '../auth/session'
+import { CommandBlock, ServiceLogViewer } from '../diagnostics/DiagnosticsParts'
 import { dateTime, formatValue } from '../metrics/format'
 import type { IncusCreateInstanceInput, IncusStateAction } from '../../lib/api/client'
 import { useApi, useDiagnostics } from '../../lib/api/queries'
@@ -136,6 +137,7 @@ export function InstancesPage() {
 
   const diagQuery = useDiagnostics()
   const incusDiag = diagQuery.data?.checks.find(c => c.id === 'incus')
+  const [showUnavailableLogs, setShowUnavailableLogs] = useState(false)
 
   const instancesQuery = useQuery({
     queryKey: ['incus', 'instances'],
@@ -273,6 +275,7 @@ export function InstancesPage() {
       {statusQuery.data && !statusQuery.data.available && (() => {
         const ctlDown = (statusQuery.data.reason ?? '').includes('vektor-ctl')
         const hasRealDiag = Boolean(incusDiag && incusDiag.status !== 'ok')
+        const logUnit = ctlDown ? 'vektor-ctl.service' : 'incus.service'
         return (
           <Panel
             title={hasRealDiag && incusDiag ? incusDiag.summary : ctlDown ? 'Helper vektor-ctl indisponível' : 'Incus não detectado neste host'}
@@ -282,7 +285,7 @@ export function InstancesPage() {
               <>
                 {incusDiag.detail && <pre {...stylex.props(s.codeBlock)}>{incusDiag.detail}</pre>}
                 {incusDiag.hint && <p {...stylex.props(layout.small)}>{incusDiag.hint}</p>}
-                {incusDiag.command && <pre {...stylex.props(s.codeBlock)}>{incusDiag.command}</pre>}
+                {incusDiag.command && <CommandBlock command={incusDiag.command} />}
               </>
             ) : ctlDown ? (
               <>
@@ -290,7 +293,7 @@ export function InstancesPage() {
                   O <code>vektord</code> não conseguiu se comunicar com o helper privilegiado <code>vektor-ctl.socket</code> em <code>/run/vektor/ctl.sock</code>.
                   Verifique se o socket está ativo e se <code>/run/vektor</code> tem permissão <code>0755</code>:
                 </p>
-                <pre {...stylex.props(s.codeBlock)}>sudo chmod 0755 /run/vektor{'\n'}sudo systemctl enable --now vektor-ctl.socket{'\n'}sudo systemctl status vektor-ctl.socket</pre>
+                <CommandBlock command={'sudo chmod 0755 /run/vektor\nsudo systemctl enable --now vektor-ctl.socket\nsudo systemctl status vektor-ctl.socket'} />
               </>
             ) : (
               <>
@@ -298,19 +301,26 @@ export function InstancesPage() {
                   O Vektor integra diretamente com o daemon do <strong>Incus</strong> através do helper isolado <code>vektor-ctl.socket</code> (ADR-006).
                   Para habilitar o gerenciamento de VMs e containers neste servidor, instale e inicialize o Incus:
                 </p>
-                <pre {...stylex.props(s.codeBlock)}>sudo apt install incus{'\n'}sudo incus admin init --minimal</pre>
+                <CommandBlock command={'sudo apt install incus\nsudo incus admin init --minimal'} />
               </>
             )}
             <div {...stylex.props(layout.row)}>
               <Button variant="outline" busy={statusQuery.isFetching || diagQuery.isFetching} onClick={() => { void statusQuery.refetch(); void diagQuery.refetch() }}>
                 {statusQuery.isFetching ? 'Verificando…' : 'Verificar novamente'}
               </Button>
+              {(hasRealDiag || ctlDown) && (
+                <Button variant="quiet" onClick={() => setShowUnavailableLogs(v => !v)}>
+                  <FileText size={14} aria-hidden />
+                  {showUnavailableLogs ? `Ocultar logs (${logUnit})` : `Ver logs (${logUnit})`}
+                </Button>
+              )}
               {statusQuery.dataUpdatedAt > 0 && !statusQuery.isFetching && (
                 <span {...stylex.props(layout.small)}>
                   Última verificação: {dateTime(statusQuery.dataUpdatedAt)}
                 </span>
               )}
             </div>
+            {showUnavailableLogs && <ServiceLogViewer unit={logUnit} />}
           </Panel>
         )
       })()}

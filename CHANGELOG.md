@@ -6,6 +6,12 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o 
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-11-25
+
+### Added
+- **Drawer lateral de diagnóstico no cabeçalho:** clicar no indicador de avisos do `Shell` abre um drawer com os checks em alerta/falha, alternância *Só problemas* / *Ver todos* e atualização sob demanda sem sair da página atual.
+- **Visualização inline de logs e cópia de comandos:** cards de diagnóstico (`Overview`, drawer global e painel de indisponibilidade do Incus em `Instances`) ganharam botão **Ver logs** por serviço `systemd` (`incus.service`, `vektor-ctl.service`, `systemd-resolved.service`, `systemd-timesyncd.service`/`chrony.service` e `vektord.service`) com filtro de severidade, além de botão **Copiar** em todos os comandos sugeridos.
+
 ## [0.8.2] - 2026-11-25
 
 ### Added

@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { Badge, Brand, Button, StatusDot, layout } from '../components/ui/ui'
 import { useSession } from '../features/auth/session'
+import { DiagnosticsDrawer } from '../features/diagnostics/DiagnosticsParts'
 import { usePeriodLink } from '../features/metrics/range'
 import { useDiagnostics, useHost, useUpdateStatus } from '../lib/api/queries'
 import { isDemoMode } from '../lib/demo/mock'
@@ -66,6 +67,12 @@ const s = stylex.create({
     color: { default: 'var(--vk-text-secondary)', ':hover': 'var(--vk-text-primary)' },
     backgroundColor: { default: 'transparent', ':hover': 'var(--vk-surface-2)' },
     textDecoration: 'none', transition: 'background-color 150ms, color 150ms',
+  },
+  diagBtn: {
+    display: 'inline-flex', alignItems: 'center', minHeight: { default: 36, '@media (pointer: coarse)': 44 },
+    paddingInline: 10, gap: 6, borderRadius: 'var(--vk-radius-2)', borderWidth: 0, cursor: 'pointer',
+    backgroundColor: { default: 'transparent', ':hover': 'var(--vk-surface-2)' },
+    transition: 'background-color 150ms',
   },
   iconBtn: {
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
@@ -130,18 +137,24 @@ function HostLabel() {
   return <span {...stylex.props(s.hostPill)}>{host.data?.inventory.hostname || 'Host local'}</span>
 }
 
-function DiagnosticsBadge() {
+function DiagnosticsBadge({ open, onOpen }: { open: boolean; onOpen: () => void }) {
   const diag = useDiagnostics()
-  const link = usePeriodLink()
   const issues = diag.data?.checks.filter(c => c.status !== 'ok') ?? []
   if (issues.length === 0) return null
   const hasFail = issues.some(c => c.status === 'fail')
   const tone = hasFail ? 'critical' : 'warning'
   const label = issues.length === 1 ? '1 aviso' : `${issues.length} avisos`
   return (
-    <Link to={link('/overview') + '#diagnostico'} title={issues.map(i => `${i.title}: ${i.summary}`).join('\n')} {...stylex.props(s.sessionLink)}>
+    <button
+      type="button"
+      onClick={onOpen}
+      aria-haspopup="dialog"
+      aria-expanded={open}
+      title={issues.map(i => `${i.title}: ${i.summary}`).join('\n')}
+      {...stylex.props(s.diagBtn)}
+    >
       <Badge tone={tone} icon={<StatusDot tone={tone} />}>{label}</Badge>
-    </Link>
+    </button>
   )
 }
 
@@ -155,6 +168,7 @@ export function Shell() {
   const titleId = useId()
   const page = pathname.startsWith('/host/') ? '/host' : pathname
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [diagOpen, setDiagOpen] = useState(false)
 
   useEffect(() => {
     const heading = main.current?.querySelector('h1')
@@ -193,7 +207,7 @@ export function Shell() {
         </div>
         <div {...stylex.props(layout.row)}>
           {isDemoMode && <Badge tone="info" icon={<StatusDot tone="info" />}>Demo</Badge>}
-          <DiagnosticsBadge />
+          <DiagnosticsBadge open={diagOpen} onOpen={() => setDiagOpen(true)} />
           <HostLabel />
           <TransportBadge />
           <button type="button" {...stylex.props(s.iconBtn)}
@@ -217,6 +231,7 @@ export function Shell() {
           <Navigation mobile close={() => setDrawerOpen(false)} />
         </div>}
       </dialog>
+      <DiagnosticsDrawer open={diagOpen} onClose={() => setDiagOpen(false)} />
     </div>
   )
 }
