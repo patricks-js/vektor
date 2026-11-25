@@ -282,7 +282,11 @@ func (a *API) routeMethods(routePath string, private bool, handlers map[string]h
 		timeout := requestTimeout
 		if strings.HasPrefix(routePath, apiPath+"/incus/") {
 			if isMutation {
-				timeout = 130 * time.Second
+				if r.Method == http.MethodPost && (routePath == apiPath+"/incus/instances" || routePath == apiPath+"/incus/instances/{name}/backups") {
+					timeout = 10*time.Minute + 10*time.Second
+				} else {
+					timeout = 75 * time.Second
+				}
 			} else {
 				timeout = 15 * time.Second
 			}

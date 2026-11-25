@@ -43,7 +43,7 @@ type Response struct {
 func actionTimeout(action string) time.Duration {
 	switch action {
 	case "incus.instance.create", "incus.backup.create":
-		return 125 * time.Second
+		return 10 * time.Minute
 	case "incus.instance.exec":
 		return 65 * time.Second
 	case "incus.instance.start", "incus.instance.stop", "incus.instance.force_stop",
@@ -51,7 +51,7 @@ func actionTimeout(action string) time.Duration {
 		"incus.instance.delete", "incus.instance.update",
 		"incus.snapshot.create", "incus.snapshot.restore", "incus.snapshot.delete",
 		"incus.backup.delete":
-		return 45 * time.Second
+		return 60 * time.Second
 	default:
 		if strings.HasPrefix(action, "incus.") {
 			return 15 * time.Second

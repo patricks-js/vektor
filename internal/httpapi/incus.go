@@ -49,14 +49,12 @@ func (a *API) incusStatus(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if err != nil || !resp.OK {
-		reason := "Failed to query Incus"
-		if err != nil {
-			reason = err.Error()
-		} else if resp.Error != "" {
-			reason = resp.Error
-		}
-		writeJSON(w, http.StatusOK, incus.Status{Available: false, Reason: reason})
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "ctl_error", "Transient error communicating with vektor-ctl: "+err.Error())
+		return
+	}
+	if !resp.OK {
+		writeError(w, http.StatusBadGateway, "incus_error", resp.Error)
 		return
 	}
 	var st incus.Status

@@ -265,7 +265,7 @@ export function InstancesPage() {
       </div>
 
       {statusQuery.isPending && <Panel><Loading label="Verificando Incus no host…" /></Panel>}
-      {statusQuery.isError && <Panel><ErrorState error={statusQuery.error} retry={() => { void statusQuery.refetch() }} /></Panel>}
+      {statusQuery.isError && !statusQuery.data && <Panel><ErrorState error={statusQuery.error} retry={() => { void statusQuery.refetch() }} /></Panel>}
 
       {statusQuery.data && !statusQuery.data.available && (() => {
         const ctlDown = (statusQuery.data.reason ?? '').includes('vektor-ctl')
@@ -337,7 +337,7 @@ export function InstancesPage() {
           )}
 
           {showCreate && (
-            <Panel title="Criar nova instância" subtitle="Pull automático via images.linuxcontainers.org (pode levar até 2 min no primeiro download)">
+            <Panel title="Criar nova instância" subtitle="Pull automático via images.linuxcontainers.org (imagens de VM podem levar alguns minutos no primeiro download)">
               <form {...stylex.props(layout.stack)} onSubmit={handleCreate} noValidate>
                 <div {...stylex.props(s.formGrid)}>
                   <TextField

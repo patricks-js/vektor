@@ -124,7 +124,8 @@ func (c *Client) waitOperationMetadata(ctx context.Context, opPath string) (json
 	if !strings.HasPrefix(opPath, "/") {
 		opPath = "/1.0/operations/" + url.PathEscape(opPath)
 	}
-	env, err := c.do(ctx, http.MethodGet, opPath+"/wait?timeout=120", nil)
+	// timeout=-1 lets the Go context govern the operation wait deadline (e.g. large VM image pulls).
+	env, err := c.do(ctx, http.MethodGet, opPath+"/wait?timeout=-1", nil)
 	if err != nil {
 		return nil, err
 	}

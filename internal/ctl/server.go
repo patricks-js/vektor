@@ -13,6 +13,8 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -279,6 +281,7 @@ type Server struct {
 	allowedUIDs map[uint32]bool
 	exec        Executor
 	idleTimeout time.Duration
+	sem         chan struct{}
 }
 
 func NewServer(allowedUIDs []uint32, exec Executor, idleTimeout time.Duration) *Server {
@@ -289,10 +292,19 @@ func NewServer(allowedUIDs []uint32, exec Executor, idleTimeout time.Duration) *
 	if exec == nil {
 		exec = SystemExecutor{}
 	}
-	return &Server{allowedUIDs: allowed, exec: exec, idleTimeout: idleTimeout}
+	return &Server{
+		allowedUIDs: allowed,
+		exec:        exec,
+		idleTimeout: idleTimeout,
+		sem:         make(chan struct{}, 16),
+	}
 }
 
 func (s *Server) Serve(ctx context.Context, ln *net.UnixListener) error {
+	var wg sync.WaitGroup
+	var active atomic.Int32
+	defer wg.Wait()
+
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -304,7 +316,10 @@ func (s *Server) Serve(ctx context.Context, ln *net.UnixListener) error {
 		if err != nil {
 			var ne net.Error
 			if errors.As(err, &ne) && ne.Timeout() {
-				// Idle timeout reached under systemd socket activation -> exit cleanly.
+				// Only exit on idle timeout when no in-flight operations remain.
+				if active.Load() > 0 {
+					continue
+				}
 				return nil
 			}
 			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
@@ -312,7 +327,22 @@ func (s *Server) Serve(ctx context.Context, ln *net.UnixListener) error {
 			}
 			return err
 		}
-		s.handleConn(ctx, conn)
+		select {
+		case s.sem <- struct{}{}:
+			active.Add(1)
+			wg.Add(1)
+			go func(c *net.UnixConn) {
+				defer func() {
+					<-s.sem
+					active.Add(-1)
+					wg.Done()
+				}()
+				s.handleConn(ctx, c)
+			}(conn)
+		default:
+			writeResp(conn, Response{OK: false, Error: "vektor-ctl busy, try again"})
+			_ = conn.Close()
+		}
 	}
 }
 

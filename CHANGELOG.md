@@ -6,6 +6,13 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o 
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-11-25
+
+### Fixed
+- **Concorrência no `vektor-ctl`:** conexões no Unix socket agora são atendidas em goroutines concorrentes (limite de 16 simultâneas) e o `--idle-timeout` aguarda operações em voo concluírem antes de encerrar, evitando bloqueio de polls durante downloads longos de imagens de VM.
+- **Timeout para criação de VMs e backups Incus:** `waitOperation` passou a usar `timeout=-1` (governado pelo contexto Go) e os timeouts de `incus.instance.create` e `incus.backup.create` foram ampliados para 10 minutos no `vektor-ctl` e na camada HTTP.
+- **Estabilidade do estado do Incus na UI:** erros transitórios em `GET /api/v1/incus/status` retornam HTTP `502` em vez de `200 { available: false }`, evitando que a tela volte falsamente para *"Incus não detectado neste host"* durante operações pesadas.
+
 ## [0.8.0] - 2026-11-24
 
 ### Added
