@@ -22,6 +22,7 @@ import (
 	"vektor/internal/config"
 	"vektor/internal/ctl"
 	"vektor/internal/database"
+	"vektor/internal/diagnostics"
 	"vektor/internal/history"
 	"vektor/internal/hostmgmt"
 	"vektor/internal/metrics/scheduler"
@@ -50,6 +51,7 @@ type API struct {
 	mgmt     *hostmgmt.Manager
 	ctl      *ctl.Client
 	audit    *audit.Store
+	diag     *diagnostics.Runner
 	hub      *scheduler.LiveHub
 	mux      *http.ServeMux
 	ui       http.Handler
@@ -73,6 +75,7 @@ func New(cfg config.HTTPConfig, queries *history.QueryService, sessions *auth.St
 	a.route(http.MethodGet, apiPath+"/resources/{id}", true, a.resource)
 	a.route(http.MethodGet, apiPath+"/metrics", true, a.series)
 	a.route(http.MethodGet, apiPath+"/health", true, a.health)
+	a.route(http.MethodGet, apiPath+"/diagnostics", true, a.diagnostics)
 	a.route(http.MethodGet, streamPath, true, a.live)
 	a.route(http.MethodPost, loginPath, false, a.login)
 	a.route(http.MethodPost, logoutPath, true, a.logout)
@@ -159,6 +162,12 @@ func (a *API) WithVersion(current string) *API {
 // WithHostMgmt attaches read-only host operational visibility (processes, services, logs).
 func (a *API) WithHostMgmt(mgmt *hostmgmt.Manager) *API {
 	a.mgmt = mgmt
+	return a
+}
+
+// WithDiagnostics attaches the on-demand diagnostic runner for /api/v1/diagnostics.
+func (a *API) WithDiagnostics(runner *diagnostics.Runner) *API {
+	a.diag = runner
 	return a
 }
 

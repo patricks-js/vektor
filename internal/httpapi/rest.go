@@ -256,7 +256,14 @@ func (a *API) health(w http.ResponseWriter, r *http.Request) {
 		result.DBPingError = "Database temporarily unavailable"
 	}
 	if result.ClockError != "" {
-		result.ClockError = "Wall clock is not trusted; historical writes are paused"
+		switch result.ClockError {
+		case "Linux does not report a synchronized wall clock",
+			"wall clock is behind previously trusted history",
+			"waiting for the synchronized wall clock to stabilize":
+			// Known safe diagnostic reasons from scheduler.trustedTime.
+		default:
+			result.ClockError = "Wall clock is not trusted; historical writes are paused"
+		}
 	}
 	if !result.DBOK || !result.DBPingOK {
 		writeJSON(w, http.StatusServiceUnavailable, struct {

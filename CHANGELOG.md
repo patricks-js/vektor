@@ -6,6 +6,13 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o 
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-11-25
+
+### Added
+- **Motor de diagnóstico acionável (`internal/diagnostics`):** novo endpoint `GET /api/v1/diagnostics` e subcomando CLI `vektord doctor [--json]` com verificações sob demanda para relógio/NTP (`adjtimex` + `systemd-timesyncd`/`chrony`), resolução DNS (`/etc/resolv.conf` e `systemd-resolved`), banco SQLite e coletores, permissão de leitura do `journald`, helper `vektor-ctl.socket` e Incus (diferenciando *não instalado* de serviço `failed`/conflitos com `lxd`/`dnsmasq` + últimas linhas do `journald`).
+- **Detalhes de erro por coletor:** `HealthTracker` agora registra `collector_last_errors` (mensagem e timestamp da última falha) e `/api/v1/health` expõe os motivos seguros de `clock_error`.
+- **Feedback proativo na UI:** indicador global de avisos no cabeçalho (`Shell`), painel de diagnóstico acionável com botão *Reexecutar* e comandos sugeridos no `Overview`, e exibição da causa real de indisponibilidade do Incus na página `Instances`.
+
 ## [0.8.1] - 2026-11-25
 
 ### Fixed

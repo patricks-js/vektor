@@ -21,6 +21,7 @@ import (
 	"vektor/internal/config"
 	"vektor/internal/ctl"
 	"vektor/internal/database"
+	"vektor/internal/diagnostics"
 	"vektor/internal/history"
 	"vektor/internal/host"
 	"vektor/internal/hostmgmt"
@@ -45,7 +46,7 @@ func main() {
 
 func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	var command string
-	if len(args) > 0 && (args[0] == "bootstrap-admin" || args[0] == "revoke-sessions") {
+	if len(args) > 0 && (args[0] == "bootstrap-admin" || args[0] == "revoke-sessions" || args[0] == "doctor") {
 		command, args = args[0], args[1:]
 	}
 	cfg := config.Default()
@@ -57,6 +58,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	logLevelStr := envOrDefault("VEKTOR_LOG_LEVEL", "info")
 	var checkMode bool
 	var showVersion bool
+	var jsonOut bool
 
 	fs := flag.NewFlagSet("vektord", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -73,8 +75,9 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	fs.StringVar(&logLevelStr, "log-level", logLevelStr, "Structured log level: debug, info, warn, error (env VEKTOR_LOG_LEVEL)")
 	fs.BoolVar(&checkMode, "check", false, "Run discovery + single collection/write cycle, print JSON status, and exit")
 	fs.BoolVar(&showVersion, "version", false, "Print vektord version and exit")
+	fs.BoolVar(&jsonOut, "json", false, "Output JSON (for doctor subcommand)")
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "Usage: vektord [bootstrap-admin | revoke-sessions] [flags]")
+		fmt.Fprintln(stderr, "Usage: vektord [bootstrap-admin | revoke-sessions | doctor] [flags]")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -93,6 +96,10 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("invalid configuration: %w", err)
+	}
+	if command == "doctor" {
+		ctlSocket := envOrDefault("VEKTOR_CTL_SOCKET", ctl.DefaultSocketPath)
+		return runDoctor(ctx, cfg, ctlSocket, jsonOut, stdout)
 	}
 
 	logger := observability.NewLogger(stderr, observability.ParseLogLevel(logLevelStr))
@@ -216,9 +223,17 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	alertEval := alerts.NewEvaluator(alertStore, alertNotifier, logger)
 	mgmt := hostmgmt.New(cfg.ProcRoot)
 	auditStore := audit.NewStore(db)
-	ctlClient := ctl.NewClient(envOrDefault("VEKTOR_CTL_SOCKET", ctl.DefaultSocketPath))
+	ctlSocket := envOrDefault("VEKTOR_CTL_SOCKET", ctl.DefaultSocketPath)
+	ctlClient := ctl.NewClient(ctlSocket)
+	diagRunner := &diagnostics.Runner{
+		Health:        health,
+		DBPing:        db.Ping,
+		Ctl:           ctlClient,
+		Mgmt:          mgmt,
+		CtlSocketPath: ctlSocket,
+	}
 
-	return runDaemon(ctx, cfg.HTTP, logger, sched, qs, sessions, hub, alertStore, alertNotifier, alertEval, mgmt, ctlClient, auditStore)
+	return runDaemon(ctx, cfg.HTTP, logger, sched, qs, sessions, hub, alertStore, alertNotifier, alertEval, mgmt, ctlClient, auditStore, diagRunner)
 }
 
 func applyHTTPEnv(cfg *config.HTTPConfig) error {

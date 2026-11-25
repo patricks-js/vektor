@@ -3,7 +3,28 @@ import type { components, paths } from './openapi'
 type Schemas = components['schemas']
 type ApiPaths = keyof paths
 export type Session = Schemas['Session']
-export type Health = Schemas['Health']
+export type CollectorErrorDetail = {
+  message: string
+  at: string
+}
+export type Health = Schemas['Health'] & {
+  collector_last_errors?: Record<string, CollectorErrorDetail>
+}
+export type DiagnosticStatus = 'ok' | 'warn' | 'fail'
+export type DiagnosticCheck = {
+  id: string
+  title: string
+  status: DiagnosticStatus
+  summary: string
+  detail?: string
+  hint?: string
+  command?: string
+}
+export type DiagnosticsReport = {
+  status: DiagnosticStatus
+  generated_at: string
+  checks: DiagnosticCheck[]
+}
 export type Host = Schemas['Host']
 export type Resource = Schemas['Resource']
 export type ResourceKind = Schemas['ResourceKind']
@@ -283,6 +304,7 @@ export function createApi(onUnauthorized?: () => void) {
     | `/api/v1/services/${string}/action`
     | '/api/v1/host/power'
     | '/api/v1/audit'
+    | '/api/v1/diagnostics'
     | `/api/v1/incus/${string}`
 
   async function send<T>(path: RequestPath, init?: RequestInit, params?: Record<string, string>) {
@@ -404,6 +426,7 @@ export function createApi(onUnauthorized?: () => void) {
     auditLog: async (signal: AbortSignal, limit = 50) =>
       (await request<{ entries: AuditEntry[] }>('/api/v1/audit', { signal }, { limit: String(limit) })).entries,
     incusStatus: (signal: AbortSignal) => request<IncusStatus>('/api/v1/incus/status', { signal }),
+    diagnostics: (signal: AbortSignal) => request<DiagnosticsReport>('/api/v1/diagnostics', { signal }),
     incusInstances: async (signal: AbortSignal) =>
       (await request<{ instances: IncusInstance[] }>('/api/v1/incus/instances', { signal })).instances,
     incusInstance: (name: string, signal: AbortSignal) =>

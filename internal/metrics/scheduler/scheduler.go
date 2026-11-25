@@ -285,7 +285,7 @@ func (s *Scheduler) RunDiscoveryOnce(ctx context.Context) error {
 		err = probeCtx.Err()
 	}
 	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, ErrClockUntrusted) && s.deps.Health != nil {
-		s.deps.Health.RecordCollectorError("discovery")
+		s.deps.Health.RecordCollectorErrorDetail("discovery", err)
 	}
 	return err
 }
@@ -330,11 +330,11 @@ func (s *Scheduler) RunSlowFSOnce(ctx context.Context) error {
 	for _, w := range snap.Warnings {
 		s.deps.Logger.Warn("slow filesystem probe warning", slog.String("collector", "filesystem"), slog.String("warning", w.Error()))
 		if s.deps.Health != nil {
-			s.deps.Health.RecordCollectorError("filesystem")
+			s.deps.Health.RecordCollectorErrorDetail("filesystem", w)
 		}
 	}
 	if err != nil && s.deps.Health != nil {
-		s.deps.Health.RecordCollectorError("filesystem")
+		s.deps.Health.RecordCollectorErrorDetail("filesystem", err)
 	}
 	return err
 }
@@ -350,11 +350,11 @@ func (s *Scheduler) RunSensorsOnce(ctx context.Context) error {
 	for _, w := range snap.Warnings {
 		s.deps.Logger.Warn("sensor probe warning", slog.String("collector", "sensors"), slog.String("warning", w.Error()))
 		if s.deps.Health != nil {
-			s.deps.Health.RecordCollectorError("sensors")
+			s.deps.Health.RecordCollectorErrorDetail("sensors", w)
 		}
 	}
 	if err != nil && s.deps.Health != nil {
-		s.deps.Health.RecordCollectorError("sensors")
+		s.deps.Health.RecordCollectorErrorDetail("sensors", err)
 	}
 	return err
 }
@@ -572,7 +572,7 @@ func (s *Scheduler) runFastCollectors(ctx context.Context, profile metrics.Profi
 				slog.String("collector", name),
 			)
 			if s.deps.Health != nil {
-				s.deps.Health.RecordCollectorError(name)
+				s.deps.Health.RecordCollectorErrorDetail(name, errors.New("previous execution still in flight"))
 			}
 			continue
 		}
@@ -606,7 +606,7 @@ func (s *Scheduler) runFastCollectors(ctx context.Context, profile metrics.Profi
 					slog.String("error", r.err.Error()),
 				)
 				if s.deps.Health != nil {
-					s.deps.Health.RecordCollectorError(r.name)
+					s.deps.Health.RecordCollectorErrorDetail(r.name, r.err)
 				}
 				// Include partial samples/CPUSamples even when a non-fatal error occurred if present.
 				if len(r.snap.Samples) > 0 || len(r.snap.CPUSamples) > 0 {

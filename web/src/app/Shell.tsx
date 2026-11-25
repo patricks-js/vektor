@@ -5,7 +5,7 @@ import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { Badge, Brand, Button, StatusDot, layout } from '../components/ui/ui'
 import { useSession } from '../features/auth/session'
 import { usePeriodLink } from '../features/metrics/range'
-import { useHost, useUpdateStatus } from '../lib/api/queries'
+import { useDiagnostics, useHost, useUpdateStatus } from '../lib/api/queries'
 import { isDemoMode } from '../lib/demo/mock'
 import { usePartialSnapshot, useTransport } from '../lib/realtime/hooks'
 import { usePreferences } from './preferences'
@@ -130,6 +130,21 @@ function HostLabel() {
   return <span {...stylex.props(s.hostPill)}>{host.data?.inventory.hostname || 'Host local'}</span>
 }
 
+function DiagnosticsBadge() {
+  const diag = useDiagnostics()
+  const link = usePeriodLink()
+  const issues = diag.data?.checks.filter(c => c.status !== 'ok') ?? []
+  if (issues.length === 0) return null
+  const hasFail = issues.some(c => c.status === 'fail')
+  const tone = hasFail ? 'critical' : 'warning'
+  const label = issues.length === 1 ? '1 aviso' : `${issues.length} avisos`
+  return (
+    <Link to={link('/overview') + '#diagnostico'} title={issues.map(i => `${i.title}: ${i.summary}`).join('\n')} {...stylex.props(s.sessionLink)}>
+      <Badge tone={tone} icon={<StatusDot tone={tone} />}>{label}</Badge>
+    </Link>
+  )
+}
+
 export function Shell() {
   const { theme, setTheme } = usePreferences()
   const { session } = useSession()
@@ -178,6 +193,7 @@ export function Shell() {
         </div>
         <div {...stylex.props(layout.row)}>
           {isDemoMode && <Badge tone="info" icon={<StatusDot tone="info" />}>Demo</Badge>}
+          <DiagnosticsBadge />
           <HostLabel />
           <TransportBadge />
           <button type="button" {...stylex.props(s.iconBtn)}

@@ -14,6 +14,7 @@ import (
 	"vektor/internal/auth"
 	"vektor/internal/config"
 	"vektor/internal/ctl"
+	"vektor/internal/diagnostics"
 	"vektor/internal/history"
 	"vektor/internal/hostmgmt"
 	"vektor/internal/httpapi"
@@ -24,7 +25,7 @@ import (
 func runDaemon(parent context.Context, cfg config.HTTPConfig, logger *slog.Logger, sched *scheduler.Scheduler,
 	queries *history.QueryService, sessions *auth.Store, hub *scheduler.LiveHub,
 	alertStore *alerts.Store, alertNotifier *alerts.Notifier, alertEval *alerts.Evaluator,
-	mgmt *hostmgmt.Manager, ctlClient *ctl.Client, auditStore *audit.Store) error {
+	mgmt *hostmgmt.Manager, ctlClient *ctl.Client, auditStore *audit.Store, diagRunner *diagnostics.Runner) error {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", cfg.ListenAddr)
@@ -40,6 +41,7 @@ func runDaemon(parent context.Context, cfg config.HTTPConfig, logger *slog.Logge
 		WithAlerts(alertStore, alertNotifier).
 		WithHostMgmt(mgmt).
 		WithControl(ctlClient, auditStore).
+		WithDiagnostics(diagRunner).
 		WithVersion(version).
 		WithUI(web.Handler()).
 		Server(ctx)

@@ -7,7 +7,7 @@ import { Badge, Button, Empty, ErrorState, Loading, Panel, SelectField, StatusDo
 import { useSession } from '../auth/session'
 import { dateTime, formatValue } from '../metrics/format'
 import type { IncusCreateInstanceInput, IncusStateAction } from '../../lib/api/client'
-import { useApi } from '../../lib/api/queries'
+import { useApi, useDiagnostics } from '../../lib/api/queries'
 
 const PAGE_SIZE = 15
 
@@ -133,6 +133,9 @@ export function InstancesPage() {
   })
 
   const available = Boolean(statusQuery.data?.available)
+
+  const diagQuery = useDiagnostics()
+  const incusDiag = diagQuery.data?.checks.find(c => c.id === 'incus')
 
   const instancesQuery = useQuery({
     queryKey: ['incus', 'instances'],
@@ -269,12 +272,19 @@ export function InstancesPage() {
 
       {statusQuery.data && !statusQuery.data.available && (() => {
         const ctlDown = (statusQuery.data.reason ?? '').includes('vektor-ctl')
+        const hasRealDiag = Boolean(incusDiag && incusDiag.status !== 'ok')
         return (
           <Panel
-            title={ctlDown ? 'Helper vektor-ctl indisponível' : 'Incus não detectado neste host'}
+            title={hasRealDiag && incusDiag ? incusDiag.summary : ctlDown ? 'Helper vektor-ctl indisponível' : 'Incus não detectado neste host'}
             subtitle={statusQuery.data.reason || 'Socket /var/lib/incus/unix.socket indisponível'}
           >
-            {ctlDown ? (
+            {hasRealDiag && incusDiag ? (
+              <>
+                {incusDiag.detail && <pre {...stylex.props(s.codeBlock)}>{incusDiag.detail}</pre>}
+                {incusDiag.hint && <p {...stylex.props(layout.small)}>{incusDiag.hint}</p>}
+                {incusDiag.command && <pre {...stylex.props(s.codeBlock)}>{incusDiag.command}</pre>}
+              </>
+            ) : ctlDown ? (
               <>
                 <p {...stylex.props(layout.small)}>
                   O <code>vektord</code> não conseguiu se comunicar com o helper privilegiado <code>vektor-ctl.socket</code> em <code>/run/vektor/ctl.sock</code>.
@@ -292,7 +302,7 @@ export function InstancesPage() {
               </>
             )}
             <div {...stylex.props(layout.row)}>
-              <Button variant="outline" busy={statusQuery.isFetching} onClick={() => { void statusQuery.refetch() }}>
+              <Button variant="outline" busy={statusQuery.isFetching || diagQuery.isFetching} onClick={() => { void statusQuery.refetch(); void diagQuery.refetch() }}>
                 {statusQuery.isFetching ? 'Verificando…' : 'Verificar novamente'}
               </Button>
               {statusQuery.dataUpdatedAt > 0 && !statusQuery.isFetching && (

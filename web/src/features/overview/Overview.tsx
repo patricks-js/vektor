@@ -1,10 +1,10 @@
 import * as stylex from '@stylexjs/stylex'
-import { ArrowDown, ArrowUp, Clock3, Cpu, HardDrive, LayoutGrid, MemoryStick, Monitor, Network, Rows2, Server } from 'lucide-react'
+import { ArrowDown, ArrowUp, Clock3, Cpu, HardDrive, LayoutGrid, MemoryStick, Monitor, Network, RefreshCw, Rows2, Server } from 'lucide-react'
 import { usePreferences } from '../../app/preferences'
 import { Facts, MetricCard } from '../../components/ui/dashboard'
 import { Badge, Button, DetailLink, Empty, ErrorState, Loading, Panel, StatusDot, layout } from '../../components/ui/ui'
-import { useHealth, useHost, useResources } from '../../lib/api/queries'
-import type { ResourceKind } from '../../lib/api/client'
+import { useDiagnostics, useHealth, useHost, useResources } from '../../lib/api/queries'
+import type { DiagnosticStatus, ResourceKind } from '../../lib/api/client'
 import { displayName, metadataText } from '../host/resourceMetadata'
 import { ChartPanel } from '../metrics/ChartPanel'
 import { TemperatureChartPanel } from '../metrics/TemperatureChartPanel'
@@ -50,6 +50,22 @@ const s = stylex.create({
   resName: { display: 'inline-flex', alignItems: 'center', gap: 8, minWidth: 0 },
   controls: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
   layoutBtn: { display: { default: 'none', '@media (min-width: 1024px)': 'inline-flex' } },
+  checkList: { display: 'grid', gap: 8 },
+  checkItem: {
+    display: 'grid', gap: 4, padding: 12, borderRadius: 'var(--vk-radius-2)',
+    backgroundColor: 'var(--vk-surface-2)', borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--vk-border-subtle)',
+  },
+  checkWarn: { borderColor: 'var(--vk-warning)' },
+  checkFail: { borderColor: 'var(--vk-critical)' },
+  checkHead: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' },
+  checkTitle: { display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, color: 'var(--vk-text-primary)' },
+  checkDetail: { fontSize: 12, color: 'var(--vk-text-secondary)', fontFamily: 'var(--vk-mono)', overflowWrap: 'anywhere' },
+  checkHint: { fontSize: 12, color: 'var(--vk-text-secondary)' },
+  cmdBlock: {
+    margin: '4px 0 0', paddingBlock: 6, paddingInline: 10, borderRadius: 'var(--vk-radius-1)',
+    backgroundColor: 'var(--vk-bg)', borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--vk-border-subtle)',
+    fontFamily: 'var(--vk-mono)', fontSize: 11, color: 'var(--vk-text-primary)', overflowX: 'auto',
+  },
 })
 
 function HostSummary() {
@@ -152,30 +168,88 @@ function ResourceSummary({ kind }: { kind: Extract<ResourceKind, 'filesystem' | 
   )
 }
 
+function diagTone(status: DiagnosticStatus): 'success' | 'warning' | 'critical' {
+  if (status === 'fail') return 'critical'
+  if (status === 'warn') return 'warning'
+  return 'success'
+}
+
 function Diagnostics() {
   const query = useHealth()
+  const diagQuery = useDiagnostics()
   const health = query.data
+  const report = diagQuery.data
   return (
-    <Panel title="Diagnóstico do daemon" subtitle="Estado da coleta, persistência e relógio interno">
-      {query.isPending && <Loading />}
-      {query.isError && <ErrorState error={query.error} retry={() => { void query.refetch() }} />}
-      {health && <>
-        {health.status === 'ok' && health.collector_error_count === 0 && health.wall_clock_jump_count === 0 && health.dropped_live_events === 0 &&
-          <p {...stylex.props(layout.small)}>Nenhum problema detectado nos diagnósticos disponíveis.</p>}
-        {health.clock_error && <Badge tone="warning" icon={<StatusDot tone="warning" />}>Relógio degradado. Escritas históricas pausadas.</Badge>}
-        {(!health.db_ok || !health.db_ping_ok) && <Badge tone="critical" icon={<StatusDot tone="critical" />}>SQLite degradado. O histórico pode estar indisponível.</Badge>}
-        <Facts items={[
-          ['Última coleta', health.last_collect_at && dateTime(health.last_collect_at)],
-          ['Última escrita', health.last_write_at && dateTime(health.last_write_at)],
-          ['Erros de coleta acumulados', health.collector_error_count],
-          ['Atraso de agregação', duration(health.rollup_lag_s)],
-          ['Eventos descartados', health.dropped_live_events],
-          ['Saltos de relógio', health.wall_clock_jump_count],
-        ]} />
-        {health.collector_errors_by_name && Object.keys(health.collector_errors_by_name).length > 0 &&
-          <Facts items={Object.entries(health.collector_errors_by_name)} />}
-      </>}
-    </Panel>
+    <div id="diagnostico">
+      <Panel
+        title="Diagnóstico do daemon"
+        subtitle="Estado da coleta, persistência, relógio, DNS, helper e Incus"
+        action={
+          <Button variant="quiet" busy={diagQuery.isFetching} onClick={() => { void query.refetch(); void diagQuery.refetch() }}>
+            <RefreshCw size={14} aria-hidden />
+            Reexecutar
+          </Button>
+        }
+      >
+        {query.isPending && <Loading />}
+        {query.isError && <ErrorState error={query.error} retry={() => { void query.refetch() }} />}
+        {health && <>
+          {health.status === 'ok' && health.collector_error_count === 0 && health.wall_clock_jump_count === 0 && health.dropped_live_events === 0 && (!report || report.status === 'ok') &&
+            <p {...stylex.props(layout.small)}>Nenhum problema detectado nos diagnósticos disponíveis.</p>}
+          {health.clock_error && (
+            <div {...stylex.props(layout.compact)}>
+              <Badge tone="warning" icon={<StatusDot tone="warning" />}>Relógio degradado. Escritas históricas pausadas.</Badge>
+              <span {...stylex.props(s.checkDetail)}>{health.clock_error}</span>
+            </div>
+          )}
+          {(!health.db_ok || !health.db_ping_ok) && (
+            <div {...stylex.props(layout.compact)}>
+              <Badge tone="critical" icon={<StatusDot tone="critical" />}>SQLite degradado. O histórico pode estar indisponível.</Badge>
+              {health.last_db_error && <span {...stylex.props(s.checkDetail)}>{health.last_db_error}</span>}
+            </div>
+          )}
+          {report && report.checks.length > 0 && (
+            <div {...stylex.props(s.checkList)}>
+              {report.checks.map(check => (
+                <div
+                  key={check.id}
+                  {...stylex.props(
+                    s.checkItem,
+                    check.status === 'warn' && s.checkWarn,
+                    check.status === 'fail' && s.checkFail,
+                  )}
+                >
+                  <div {...stylex.props(s.checkHead)}>
+                    <span {...stylex.props(s.checkTitle)}>
+                      <StatusDot tone={diagTone(check.status)} />
+                      {check.title}
+                    </span>
+                    <span {...stylex.props(layout.small)}>{check.summary}</span>
+                  </div>
+                  {check.detail && <div {...stylex.props(s.checkDetail)}>{check.detail}</div>}
+                  {check.hint && <div {...stylex.props(s.checkHint)}>{check.hint}</div>}
+                  {check.command && check.status !== 'ok' && <pre {...stylex.props(s.cmdBlock)}>{check.command}</pre>}
+                </div>
+              ))}
+            </div>
+          )}
+          <Facts items={[
+            ['Última coleta', health.last_collect_at && dateTime(health.last_collect_at)],
+            ['Última escrita', health.last_write_at && dateTime(health.last_write_at)],
+            ['Erros de coleta acumulados', health.collector_error_count],
+            ['Atraso de agregação', duration(health.rollup_lag_s)],
+            ['Eventos descartados', health.dropped_live_events],
+            ['Saltos de relógio', health.wall_clock_jump_count],
+          ]} />
+          {health.collector_errors_by_name && Object.keys(health.collector_errors_by_name).length > 0 && (
+            <Facts items={Object.entries(health.collector_errors_by_name).map(([name, count]) => {
+              const last = health.collector_last_errors?.[name]
+              return [name, last ? `${count}x · ${last.message}` : `${count}x`]
+            })} />
+          )}
+        </>}
+      </Panel>
+    </div>
   )
 }
 

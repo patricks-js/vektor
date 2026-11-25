@@ -1,5 +1,5 @@
 import { ApiError } from '../api/client'
-import type { AlertChannel, AlertEvent, AlertRule, Api, AuditEntry, Health, Host, IncusBackup, IncusInstance, IncusResources, IncusSnapshot, LogEntry, ProcessInfo, Resource, ResourceKind, Series, SeriesPoint, ServiceInfo, Session, Step } from '../api/client'
+import type { AlertChannel, AlertEvent, AlertRule, Api, AuditEntry, DiagnosticsReport, Health, Host, IncusBackup, IncusInstance, IncusResources, IncusSnapshot, LogEntry, ProcessInfo, Resource, ResourceKind, Series, SeriesPoint, ServiceInfo, Session, Step } from '../api/client'
 import type { LiveStore, TransportState } from '../realtime/store'
 import type { LivePoint } from '../realtime/stream'
 import { metric } from '../../features/metrics/catalog'
@@ -435,6 +435,22 @@ export function createDemoApi(onUnauthorized?: () => void): Api {
         dropped_live_events: 0,
         active_live_subscribers: 1,
         wall_clock_jump_count: 0,
+      }
+    },
+    async diagnostics(signal): Promise<DiagnosticsReport> {
+      checkAbort(signal)
+      requireSession()
+      return {
+        status: 'ok',
+        generated_at: new Date().toISOString(),
+        checks: [
+          { id: 'clock', title: 'Relógio e NTP', status: 'ok', summary: 'Relógio sincronizado (erro máximo: 0.12s)', detail: 'Cliente NTP ativo: systemd-timesyncd.service' },
+          { id: 'dns', title: 'Resolução DNS', status: 'ok', summary: 'DNS configurado (127.0.0.53)' },
+          { id: 'database', title: 'SQLite e coletores', status: 'ok', summary: 'Banco SQLite e coletores operando normalmente' },
+          { id: 'journald', title: 'Logs do sistema (journald)', status: 'ok', summary: 'Leitura do journald disponível' },
+          { id: 'ctl', title: 'Helper privilegiado (vektor-ctl)', status: 'ok', summary: 'Socket /run/vektor/ctl.sock disponível' },
+          { id: 'incus', title: 'Virtualização (Incus)', status: 'ok', summary: 'Incus 6.8 ativo (5 instâncias, 3 em execução)' },
+        ],
       }
     },
     async resource(id, signal): Promise<Resource> {

@@ -14,20 +14,27 @@ const (
 	StatusDegraded HealthStatus = "degraded"
 )
 
+// CollectorErrorDetail records the most recent error message and timestamp for a collector.
+type CollectorErrorDetail struct {
+	Message string    `json:"message"`
+	At      time.Time `json:"at"`
+}
+
 // HealthSnapshot is a point-in-time read-only view of internal daemon health counters.
 type HealthSnapshot struct {
-	Status                HealthStatus     `json:"status"`
-	DBOK                  bool             `json:"db_ok"`
-	LastDBError           string           `json:"last_db_error,omitempty"`
-	LastCollectAt         *time.Time       `json:"last_collect_at,omitempty"`
-	LastWriteAt           *time.Time       `json:"last_write_at,omitempty"`
-	RollupLagS            int64            `json:"rollup_lag_s"`
-	CollectorErrorCount   int64            `json:"collector_error_count"`
-	CollectorErrorsByName map[string]int64 `json:"collector_errors_by_name,omitempty"`
-	DroppedLiveEvents     int64            `json:"dropped_live_events"`
-	ActiveLiveSubscribers int              `json:"active_live_subscribers"`
-	WallClockJumpCount    int64            `json:"wall_clock_jump_count"`
-	ClockError            string           `json:"clock_error,omitempty"`
+	Status                HealthStatus                    `json:"status"`
+	DBOK                  bool                            `json:"db_ok"`
+	LastDBError           string                          `json:"last_db_error,omitempty"`
+	LastCollectAt         *time.Time                      `json:"last_collect_at,omitempty"`
+	LastWriteAt           *time.Time                      `json:"last_write_at,omitempty"`
+	RollupLagS            int64                           `json:"rollup_lag_s"`
+	CollectorErrorCount   int64                           `json:"collector_error_count"`
+	CollectorErrorsByName map[string]int64                `json:"collector_errors_by_name,omitempty"`
+	CollectorLastErrors   map[string]CollectorErrorDetail `json:"collector_last_errors,omitempty"`
+	DroppedLiveEvents     int64                           `json:"dropped_live_events"`
+	ActiveLiveSubscribers int                             `json:"active_live_subscribers"`
+	WallClockJumpCount    int64                           `json:"wall_clock_jump_count"`
+	ClockError            string                          `json:"clock_error,omitempty"`
 }
 
 // HealthTracker tracks thread-safe runtime health signals required by TECHNICAL_DESIGN_V0.1.md.
@@ -40,6 +47,7 @@ type HealthTracker struct {
 	rollupLagS            int64
 	collectorErrorCount   int64
 	collectorErrorsByName map[string]int64
+	collectorLastErrors   map[string]CollectorErrorDetail
 	droppedLiveEvents     int64
 	activeLiveSubscribers int
 	wallClockJumpCount    int64
@@ -51,6 +59,7 @@ func NewHealthTracker() *HealthTracker {
 	return &HealthTracker{
 		dbOK:                  true,
 		collectorErrorsByName: make(map[string]int64),
+		collectorLastErrors:   make(map[string]CollectorErrorDetail),
 	}
 }
 
@@ -79,11 +88,25 @@ func (h *HealthTracker) RecordDBError(err error) {
 }
 
 func (h *HealthTracker) RecordCollectorError(name string) {
+	h.RecordCollectorErrorDetail(name, nil)
+}
+
+func (h *HealthTracker) RecordCollectorErrorDetail(name string, err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.collectorErrorCount++
 	if name != "" {
 		h.collectorErrorsByName[name]++
+		if err != nil {
+			msg := err.Error()
+			if len(msg) > 240 {
+				msg = msg[:237] + "..."
+			}
+			h.collectorLastErrors[name] = CollectorErrorDetail{
+				Message: msg,
+				At:      time.Now().UTC(),
+			}
+		}
 	}
 }
 
@@ -146,6 +169,10 @@ func (h *HealthTracker) Snapshot() HealthSnapshot {
 	if len(h.collectorErrorsByName) > 0 {
 		byName = maps.Clone(h.collectorErrorsByName)
 	}
+	var lastErrors map[string]CollectorErrorDetail
+	if len(h.collectorLastErrors) > 0 {
+		lastErrors = maps.Clone(h.collectorLastErrors)
+	}
 
 	return HealthSnapshot{
 		Status:                status,
@@ -156,6 +183,7 @@ func (h *HealthTracker) Snapshot() HealthSnapshot {
 		RollupLagS:            h.rollupLagS,
 		CollectorErrorCount:   h.collectorErrorCount,
 		CollectorErrorsByName: byName,
+		CollectorLastErrors:   lastErrors,
 		DroppedLiveEvents:     h.droppedLiveEvents,
 		ActiveLiveSubscribers: h.activeLiveSubscribers,
 		WallClockJumpCount:    h.wallClockJumpCount,

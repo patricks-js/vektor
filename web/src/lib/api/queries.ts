@@ -20,6 +20,17 @@ export function useHealth() {
   return useQuery({ queryKey: ['health'], queryFn: ({ signal }) => api.health(signal), staleTime: 20_000, refetchInterval: 30_000 })
 }
 
+export function useDiagnostics() {
+  const api = useApi()
+  return useQuery({
+    queryKey: ['diagnostics'],
+    queryFn: ({ signal }) => api.diagnostics(signal),
+    staleTime: 25_000,
+    refetchInterval: 60_000,
+    retry: false,
+  })
+}
+
 export function useResources(kind: ResourceKind) {
   const api = useApi()
   return useQuery({ queryKey: ['resources', kind], queryFn: ({ signal }) => api.resources(kind, signal), staleTime: 45_000, refetchInterval: 60_000 })
