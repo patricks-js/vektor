@@ -50,6 +50,21 @@ Open `http://<your-server>:8080` to sign in. Run `vektord doctor` anytime to ver
 
 </details>
 
+### Changing the Web Port
+
+By default, `vektord` listens on `127.0.0.1:8080`. To change the port (or bind to all interfaces), edit `/etc/vektor/vektord.env` and restart the service:
+
+```bash
+# /etc/vektor/vektord.env
+VEKTOR_HTTP_ADDR=0.0.0.0:9090
+```
+
+```bash
+sudo systemctl restart vektord
+```
+
+When running `vektord` directly, you can also pass `--http-addr` (e.g. `vektord --http-addr :9090`). If exposing Vektor on a LAN IP or behind a reverse proxy, set `VEKTOR_PUBLIC_ORIGIN` in `/etc/vektor/vektord.env` as well.
+
 ## Upgrade
 
 Check for new releases and upgrade in place (verifies `SHA256SUMS.txt`, backs up `vektor.db`, and applies the update automatically):
