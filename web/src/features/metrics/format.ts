@@ -1,4 +1,4 @@
-import type { TimeZone } from '../../app/preferences'
+import type { TimeZone } from '#/app/preferences'
 
 const decimal = new Intl.NumberFormat('en', { maximumFractionDigits: 1 })
 const temperature = new Intl.NumberFormat('en', { maximumFractionDigits: 2 })

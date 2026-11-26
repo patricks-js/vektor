@@ -2,11 +2,11 @@ import * as stylex from '@stylexjs/stylex'
 import { ChevronLeft, ChevronRight, FileText, Play, RefreshCw, RotateCw, Skull, Square, X } from 'lucide-react'
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Badge, Button, Empty, ErrorState, Loading, Modal, Panel, SelectField, StatusDot, TextField, layout, tableStyles } from '../../components/ui/ui'
-import type { ProcessInfo, ServiceAction } from '../../lib/api/client'
-import { useApi } from '../../lib/api/queries'
-import { useSession } from '../auth/session'
-import { dateTime, formatValue } from '../metrics/format'
+import { Badge, Button, Empty, ErrorState, Loading, Modal, Panel, SelectField, StatusDot, TextField, layout, tableStyles } from '#/components/ui/ui'
+import type { ProcessInfo, ServiceAction } from '#/lib/api/client'
+import { useApi } from '#/lib/api/queries'
+import { useSession } from '#/features/auth/session'
+import { dateTime, formatValue } from '#/features/metrics/format'
 
 const s = stylex.create({
   wideTable: { minWidth: 620 },

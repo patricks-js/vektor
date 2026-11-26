@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test'
-import type { Host, Resource, ResourceKind, Series } from '../src/lib/api/client'
+import type { Host, Resource, ResourceKind, Series } from '#/lib/api/client'
 
 function resource(id: string, kind: ResourceKind, display_name: string, meta: object = {}, active = true): Resource {
   return { id, kind, display_name, metadata_json: JSON.stringify(meta), external_key: id, active,

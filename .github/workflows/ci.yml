@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   frontend:
-    name: Frontend (typecheck, lint, test, build)
+    name: Frontend (typecheck, test, build)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,9 +28,6 @@ jobs:
 
       - name: Typecheck
         run: bun run --cwd web typecheck
-
-      - name: Lint
-        run: bun run --cwd web lint
 
       - name: Unit tests
         run: bun run --cwd web test

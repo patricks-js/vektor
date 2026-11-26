@@ -3,21 +3,21 @@ import { Cpu, Gauge, LayoutGrid, MemoryStick, Rows2 } from 'lucide-react'
 import { useEffect, useId, useRef } from 'react'
 import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { usePreferences } from '../../app/preferences'
-import { hostTabs, isHostTab } from '../../app/routes'
-import type { HostTab } from '../../app/routes'
-import { Facts, MetricCard, PageHeading } from '../../components/ui/dashboard'
-import { Button, Empty, ErrorState, Loading, Panel, layout } from '../../components/ui/ui'
-import type { Host, Resource, ResourceKind } from '../../lib/api/client'
-import { useLiveReading } from '../../lib/realtime/hooks'
-import { useApi, useHost, useResources } from '../../lib/api/queries'
-import { ChartPanel } from '../metrics/ChartPanel'
-import { TemperatureChartPanel } from '../metrics/TemperatureChartPanel'
-import { metric } from '../metrics/catalog'
-import { ChartCursorProvider } from '../metrics/cursor'
-import { dateTime } from '../metrics/format'
-import { TimeRangeSelector, usePeriodLink } from '../metrics/range'
-import { LiveValue, PersistedValue } from '../metrics/readings'
+import { usePreferences } from '#/app/preferences'
+import { hostTabs, isHostTab } from '#/app/routes'
+import type { HostTab } from '#/app/routes'
+import { Facts, MetricCard, PageHeading } from '#/components/ui/dashboard'
+import { Button, Empty, ErrorState, Loading, Panel, layout } from '#/components/ui/ui'
+import type { Host, Resource, ResourceKind } from '#/lib/api/client'
+import { useLiveReading } from '#/lib/realtime/hooks'
+import { useApi, useHost, useResources } from '#/lib/api/queries'
+import { ChartPanel } from '#/features/metrics/ChartPanel'
+import { TemperatureChartPanel } from '#/features/metrics/TemperatureChartPanel'
+import { metric } from '#/features/metrics/catalog'
+import { ChartCursorProvider } from '#/features/metrics/cursor'
+import { dateTime } from '#/features/metrics/format'
+import { TimeRangeSelector, usePeriodLink } from '#/features/metrics/range'
+import { LiveValue, PersistedValue } from '#/features/metrics/readings'
 import { ResourceTable } from './ResourceTable'
 import type { ResourceColumn } from './ResourceTable'
 import { ProcessesView, ServicesView } from './HostOperations'
@@ -165,8 +165,8 @@ function ResourceDetails({ id, allowed, singleColumn }: { id: string; allowed: R
         ['Última descoberta', dateTime(resource.last_seen_ms)],
         ['Estado no inventário', resource.active ? 'Ativo' : 'Inativo'],
         ...extra,
-        ...(resource.kind === 'nic' && typeof meta.include_in_host_aggregate === 'boolean'
-          ? [['Agregado do host', meta.include_in_host_aggregate ? 'Incluída' : 'Excluída'] as [string, string]] : []),
+        ...(resource.kind === 'nic' && typeof meta['include_in_host_aggregate'] === 'boolean'
+          ? [['Agregado do host', meta['include_in_host_aggregate'] ? 'Incluída' : 'Excluída'] as [string, string]] : []),
       ]} />
       {resource.kind === 'sensor' && <Facts items={sensorColumns.slice(-1).map(column => [column.label, column.cell(resource)])} />}
     </Panel>
@@ -270,7 +270,9 @@ export function HostPage() {
               event.key === 'Home' ? 0 : event.key === 'End' ? hostTabs.length - 1 : undefined
             if (move === undefined) return
             event.preventDefault()
-            const next = hostTabs[(move + hostTabs.length) % hostTabs.length].id
+            const nextTab = hostTabs[(move + hostTabs.length) % hostTabs.length]
+            if (!nextTab) return
+            const next = nextTab.id
             void nav(link('/host/' + next))
             event.currentTarget.querySelector<HTMLButtonElement>(`[data-tab="${next}"]`)?.focus()
           }}>

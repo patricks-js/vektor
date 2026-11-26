@@ -3,12 +3,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Box, ChevronLeft, ChevronRight, Cpu, FileText, HardDrive, Monitor, Network, Pause, Play, Plus, Power, RotateCw, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Badge, Button, Empty, ErrorState, Loading, Panel, SelectField, StatusDot, TextField, layout, tableStyles } from '../../components/ui/ui'
-import { useSession } from '../auth/session'
-import { CommandBlock, ServiceLogViewer } from '../diagnostics/DiagnosticsParts'
-import { dateTime, formatValue } from '../metrics/format'
-import type { IncusCreateInstanceInput, IncusStateAction } from '../../lib/api/client'
-import { useApi, useDiagnostics } from '../../lib/api/queries'
+import { Badge, Button, Empty, ErrorState, Loading, Panel, SelectField, StatusDot, TextField, layout, tableStyles } from '#/components/ui/ui'
+import { useSession } from '#/features/auth/session'
+import { CommandBlock, ServiceLogViewer } from '#/features/diagnostics/DiagnosticsParts'
+import { dateTime, formatValue } from '#/features/metrics/format'
+import type { IncusCreateInstanceInput, IncusStateAction } from '#/lib/api/client'
+import { useApi, useDiagnostics } from '#/lib/api/queries'
 
 const PAGE_SIZE = 15
 
@@ -155,9 +155,9 @@ export function InstancesPage() {
 
   const [newName, setNewName] = useState('')
   const [newKind, setNewKind] = useState<'container' | 'oci' | 'virtual-machine'>('container')
-  const [newImage, setNewImage] = useState(IMAGE_PRESETS[0].value)
-  const [newOCIImage, setNewOCIImage] = useState(OCI_PRESETS[0].value)
-  const [newOCIRegistry, setNewOCIRegistry] = useState(OCI_REGISTRIES[0].value)
+  const [newImage, setNewImage] = useState(IMAGE_PRESETS[0]?.value ?? '')
+  const [newOCIImage, setNewOCIImage] = useState(OCI_PRESETS[0]?.value ?? '')
+  const [newOCIRegistry, setNewOCIRegistry] = useState(OCI_REGISTRIES[0]?.value ?? '')
   const [customImage, setCustomImage] = useState('')
   const [newCPU, setNewCPU] = useState('2')
   const [newMemValue, setNewMemValue] = useState('1')

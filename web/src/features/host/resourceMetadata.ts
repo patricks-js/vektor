@@ -1,4 +1,4 @@
-import type { Resource } from '../../lib/api/client'
+import type { Resource } from '#/lib/api/client'
 
 export function metadata(resource: Resource): Record<string, unknown> {
   try {

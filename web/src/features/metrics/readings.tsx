@@ -1,7 +1,7 @@
 import * as stylex from '@stylexjs/stylex'
 import { useSyncExternalStore } from 'react'
-import { ProgressBar } from '../../components/ui/dashboard'
-import { useLiveReading } from '../../lib/realtime/hooks'
+import { ProgressBar } from '#/components/ui/dashboard'
+import { useLiveReading } from '#/lib/realtime/hooks'
 import { dateTime, formatValue } from './format'
 import { useHistory } from './series'
 

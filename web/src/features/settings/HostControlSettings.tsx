@@ -2,10 +2,10 @@ import * as stylex from '@stylexjs/stylex'
 import { Power, RefreshCw, RotateCcw } from 'lucide-react'
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Badge, Button, Empty, ErrorState, Loading, Modal, StatusDot, layout } from '../../components/ui/ui'
-import { useApi } from '../../lib/api/queries'
-import { useSession } from '../auth/session'
-import { dateTime } from '../metrics/format'
+import { Badge, Button, Empty, ErrorState, Loading, Modal, StatusDot, layout } from '#/components/ui/ui'
+import { useApi } from '#/lib/api/queries'
+import { useSession } from '#/features/auth/session'
+import { dateTime } from '#/features/metrics/format'
 
 const s = stylex.create({
   list: { display: 'grid', gap: 8 },

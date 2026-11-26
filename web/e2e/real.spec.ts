@@ -15,7 +15,7 @@ test('autentica no daemon, acompanha o SSE, restaura a conexão e revoga a sess�
   await page.getByRole('button', { name: 'Entrar' }).click()
   await expect(page.getByRole('alert')).toHaveText('Usuário ou senha inválidos.')
   await expect(page.getByRole('alert')).toBeFocused()
-  await page.getByLabel('Senha', { exact: true }).fill(process.env.VEKTOR_E2E_PASSWORD || 'vektor-browser-test-password')
+  await page.getByLabel('Senha', { exact: true }).fill(process.env['VEKTOR_E2E_PASSWORD'] || 'vektor-browser-test-password')
   await page.getByRole('button', { name: 'Mostrar senha' }).click()
   await expect(page.getByLabel('Senha', { exact: true })).toHaveAttribute('type', 'text')
   await page.getByLabel('Senha', { exact: true }).press('Enter')

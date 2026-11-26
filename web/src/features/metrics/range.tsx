@@ -3,9 +3,9 @@ import { CalendarClock } from 'lucide-react'
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { isRange, ranges, usePreferences } from '../../app/preferences'
-import type { TimeRange } from '../../app/preferences'
-import { Button, Modal, TextField, layout } from '../../components/ui/ui'
+import { isRange, ranges, usePreferences } from '#/app/preferences'
+import type { TimeRange } from '#/app/preferences'
+import { Button, Modal, TextField, layout } from '#/components/ui/ui'
 import { dateTime } from './format'
 
 export const rangeMs: Record<TimeRange, number> = {

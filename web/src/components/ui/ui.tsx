@@ -3,7 +3,7 @@ import { AlertCircle, ArrowUpRight, Box, Database, LoaderCircle, X } from 'lucid
 import { Link } from 'react-router-dom'
 import { useEffect, useId, useRef } from 'react'
 import type { ButtonHTMLAttributes, ComponentPropsWithRef, ReactNode, SelectHTMLAttributes } from 'react'
-import { ApiError } from '../../lib/api/client'
+import { ApiError } from '#/lib/api/client'
 
 export const layout = stylex.create({
   page: { display: 'grid', gap: 16, minWidth: 0 },

@@ -3,13 +3,13 @@ import { Plus, Send, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Badge, Button, Empty, ErrorState, Loading, SelectField, StatusDot, TextField, layout } from '../../components/ui/ui'
-import type { AlertRule } from '../../lib/api/client'
-import { useApi, useResources } from '../../lib/api/queries'
-import { displayName, metadataText } from '../host/resourceMetadata'
-import { useSession } from '../auth/session'
-import { metric } from '../metrics/catalog'
-import { dateTime } from '../metrics/format'
+import { Badge, Button, Empty, ErrorState, Loading, SelectField, StatusDot, TextField, layout } from '#/components/ui/ui'
+import type { AlertRule } from '#/lib/api/client'
+import { useApi, useResources } from '#/lib/api/queries'
+import { displayName, metadataText } from '#/features/host/resourceMetadata'
+import { useSession } from '#/features/auth/session'
+import { metric } from '#/features/metrics/catalog'
+import { dateTime } from '#/features/metrics/format'
 
 const s = stylex.create({
   list: { display: 'grid', gap: 10 },
@@ -65,7 +65,7 @@ export function AlertsSection() {
   const [busy, setBusy] = useState(false)
   const [feedback, setFeedback] = useState('')
 
-  const selectedOption = metricOptions.find(opt => opt.value === metricKey) ?? metricOptions[0]
+  const selectedOption = metricOptions.find(opt => opt.value === metricKey) ?? metricOptions[0]!
   const resourceChoices = selectedOption.kind === 'filesystem' ? activeFilesystems
     : selectedOption.kind === 'sensor' ? activeSensors : []
 

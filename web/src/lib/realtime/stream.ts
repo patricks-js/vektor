@@ -1,4 +1,4 @@
-import { ApiError } from '../api/client'
+import { ApiError } from '#/lib/api/client'
 
 export type LivePoint = { resource_id: string; metric: string; timestamp_ms: number; value: number }
 export type Snapshot = { collected_at: string; points: LivePoint[]; warning_count: number; truncated: boolean }

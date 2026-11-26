@@ -1,8 +1,10 @@
-import { ApiError } from '../api/client'
-import type { AlertChannel, AlertEvent, AlertRule, Api, AuditEntry, DiagnosticsReport, Health, Host, IncusBackup, IncusInstance, IncusResources, IncusSnapshot, LogEntry, ProcessInfo, Resource, ResourceKind, Series, SeriesPoint, ServiceInfo, Session, Step } from '../api/client'
-import type { LiveStore, TransportState } from '../realtime/store'
-import type { LivePoint } from '../realtime/stream'
-import { metric } from '../../features/metrics/catalog'
+import { ApiError } from '#/lib/api/client'
+import type { AlertChannel, AlertEvent, AlertRule, Api, AuditEntry, DiagnosticsReport, Health, Host, IncusBackup, IncusInstance, IncusResources, IncusSnapshot, LogEntry, ProcessInfo, Resource, ResourceKind, Series, SeriesPoint, ServiceInfo, Session, Step } from '#/lib/api/client'
+import type { LiveStore, TransportState } from '#/lib/realtime/store'
+import type { LivePoint } from '#/lib/realtime/stream'
+import { metric } from '#/features/metrics/catalog'
+
+import '#/env'
 
 export const isDemoMode = import.meta.env.VITE_DEMO_MODE === 'true'
 
@@ -416,7 +418,7 @@ export function createDemoApi(onUnauthorized?: () => void): Api {
       requireSession()
       const now = Date.now()
       return {
-        resource: { ...getDemoResources()[0], last_seen_ms: now },
+        resource: { ...getDemoResources()[0]!, last_seen_ms: now },
         inventory: {
           hostname: 'prod-fra-01',
           os_name: 'Ubuntu',
@@ -509,7 +511,9 @@ export function createDemoApi(onUnauthorized?: () => void): Api {
       const state = getDemoAlertState()
       const idx = state.rules.findIndex(r => r.id === id)
       if (idx === -1) throw new ApiError(404, 'not_found')
-      const updated: AlertRule = { ...state.rules[idx], ...input, id, updated_at_ms: Date.now() }
+      const existing = state.rules[idx]
+      if (!existing) throw new ApiError(404, 'not_found')
+      const updated: AlertRule = { ...existing, ...input, id, updated_at_ms: Date.now() }
       state.rules[idx] = updated
       return updated
     },

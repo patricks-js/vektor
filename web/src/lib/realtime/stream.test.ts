@@ -14,7 +14,7 @@ it('decodes chunk boundaries, heartbeat comments and a multiline snapshot includ
   const frames: string[] = []
   await readStream(stream, frame => frames.push(frame))
   expect(frames.slice(0, 2)).toEqual([': connected', ': heartbeat'])
-  expect(decodeSnapshot(frames[2])?.points[0]).toMatchObject({ resource_id: 'cpu:9', value: 0 })
+  expect(decodeSnapshot(frames[2] ?? '')?.points[0]).toMatchObject({ resource_id: 'cpu:9', value: 0 })
   expect(decodeSnapshot('event: snapshot\ndata: {broken')).toBeUndefined()
   expect(stream.locked).toBe(false)
 })

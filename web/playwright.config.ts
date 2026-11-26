@@ -1,7 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 
-const baseURL = process.env.VEKTOR_E2E_URL || `http://127.0.0.1:${process.env.VEKTOR_E2E_PORT || '18437'}`
-const executablePath = process.env.VEKTOR_CHROMIUM_PATH
+const baseURL = process.env['VEKTOR_E2E_URL'] || `http://127.0.0.1:${process.env['VEKTOR_E2E_PORT'] || '18437'}`
+const executablePath = process.env['VEKTOR_CHROMIUM_PATH']
 
 export default defineConfig({
   testDir: './e2e',
@@ -16,7 +16,7 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     launchOptions: executablePath ? { executablePath } : undefined,
   },
-  ...(process.env.VEKTOR_E2E_URL ? {} : {
+  ...(process.env['VEKTOR_E2E_URL'] ? {} : {
     webServer: {
       command: 'bun scripts/e2e-server.ts',
       url: baseURL + '/login',

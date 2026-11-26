@@ -2,10 +2,10 @@ import * as stylex from '@stylexjs/stylex'
 import { ArrowRight, Eye, EyeOff, Terminal } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
-import { ApiError, createApi } from '../../lib/api/client'
-import type { Session } from '../../lib/api/client'
-import { createDemoApi, isDemoMode } from '../../lib/demo/mock'
-import { Brand, Button, TextField, layout } from '../../components/ui/ui'
+import { ApiError, createApi } from '#/lib/api/client'
+import type { Session } from '#/lib/api/client'
+import { createDemoApi, isDemoMode } from '#/lib/demo/mock'
+import { Brand, Button, TextField, layout } from '#/components/ui/ui'
 
 const s = stylex.create({
   screen: { display: 'grid', minHeight: '100dvh', placeItems: 'center', padding: { default: 16, '@media (min-width: 768px)': 32 } },

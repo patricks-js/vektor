@@ -3,16 +3,16 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Activity, Archive, ArrowLeft, Camera, Cpu, Download, HardDrive, Monitor, Network, Pause, Play, Plus, Power, RefreshCw, RotateCw, Settings2, Terminal, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { Facts } from '../../components/ui/dashboard'
-import { Badge, Button, Empty, ErrorState, Loading, Modal, Panel, SelectField, StatusDot, TextField, layout, tableStyles } from '../../components/ui/ui'
-import { useSession } from '../auth/session'
-import { ChartPanel } from '../metrics/ChartPanel'
-import { metric } from '../metrics/catalog'
-import { ChartCursorProvider } from '../metrics/cursor'
-import { dateTime, formatValue } from '../metrics/format'
-import { TimeRangeSelector } from '../metrics/range'
-import type { IncusStateAction } from '../../lib/api/client'
-import { useApi } from '../../lib/api/queries'
+import { Facts } from '#/components/ui/dashboard'
+import { Badge, Button, Empty, ErrorState, Loading, Modal, Panel, SelectField, StatusDot, TextField, layout, tableStyles } from '#/components/ui/ui'
+import { useSession } from '#/features/auth/session'
+import { ChartPanel } from '#/features/metrics/ChartPanel'
+import { metric } from '#/features/metrics/catalog'
+import { ChartCursorProvider } from '#/features/metrics/cursor'
+import { dateTime, formatValue } from '#/features/metrics/format'
+import { TimeRangeSelector } from '#/features/metrics/range'
+import type { IncusStateAction } from '#/lib/api/client'
+import { useApi } from '#/lib/api/queries'
 
 type DetailTab = 'overview' | 'metrics' | 'network' | 'terminal' | 'snapshots' | 'backups'
 
@@ -125,7 +125,7 @@ function statusTone(status: string): 'success' | 'warning' | 'critical' | 'neutr
 function parseLimitBytes(limit?: string): number | null {
   if (!limit) return null
   const m = /^(\d+)\s*(MiB|GiB|MB|GB|KiB|B)$/i.exec(limit.trim())
-  if (!m) return null
+  if (!m || !m[1] || !m[2]) return null
   const num = Number(m[1])
   switch (m[2].toLowerCase()) {
     case 'gib': case 'gb': return num * 1024 ** 3
@@ -138,7 +138,7 @@ function parseLimitBytes(limit?: string): number | null {
 function parseMemLimitFields(limit?: string): { value: string; unit: 'MiB' | 'GiB' } {
   if (!limit) return { value: '', unit: 'GiB' }
   const m = /^(\d+)\s*(MiB|GiB)$/i.exec(limit.trim())
-  if (!m) return { value: '', unit: 'GiB' }
+  if (!m || !m[1] || !m[2]) return { value: '', unit: 'GiB' }
   return { value: m[1], unit: m[2].toLowerCase() === 'mib' ? 'MiB' : 'GiB' }
 }
 
@@ -750,7 +750,7 @@ export function InstanceDetail() {
                             e.preventDefault()
                             const next = historyIdx < 0 ? termEntries.length - 1 : Math.max(0, historyIdx - 1)
                             setHistoryIdx(next)
-                            setCmdInput(termEntries[next].command)
+                            setCmdInput(termEntries[next]?.command ?? '')
                           } else if (e.key === 'ArrowDown' && historyIdx >= 0) {
                             e.preventDefault()
                             if (historyIdx >= termEntries.length - 1) {
@@ -759,7 +759,7 @@ export function InstanceDetail() {
                             } else {
                               const next = historyIdx + 1
                               setHistoryIdx(next)
-                              setCmdInput(termEntries[next].command)
+                              setCmdInput(termEntries[next]?.command ?? '')
                             }
                           }
                         }}

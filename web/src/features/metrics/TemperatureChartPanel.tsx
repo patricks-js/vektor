@@ -1,11 +1,11 @@
 import * as stylex from '@stylexjs/stylex'
 import { useQueries } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { usePreferences } from '../../app/preferences'
-import { Empty, ErrorState, Loading, Panel, Source, layout } from '../../components/ui/ui'
-import type { Resource, Series } from '../../lib/api/client'
-import { useApi } from '../../lib/api/queries'
-import { displayName } from '../host/resourceMetadata'
+import { usePreferences } from '#/app/preferences'
+import { Empty, ErrorState, Loading, Panel, Source, layout } from '#/components/ui/ui'
+import type { Resource, Series } from '#/lib/api/client'
+import { useApi } from '#/lib/api/queries'
+import { displayName } from '#/features/host/resourceMetadata'
 import { metric } from './catalog'
 import { useChartCursor } from './cursor'
 import { axisTime, dateTime, duration, formatValue, timeZoneLabel } from './format'
@@ -74,12 +74,14 @@ function MultiSensorChart({ tracks }: { tracks: Track[] }) {
   const { time, setTime } = useChartCursor()
   useEffect(() => {
     if (!element.current) return
-    const observer = new ResizeObserver(([entry]) => setWidth(Math.max(1, Math.floor(entry.contentRect.width))))
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) setWidth(Math.max(1, Math.floor(entry.contentRect.width)))
+    })
     observer.observe(element.current)
     return () => observer.disconnect()
   }, [])
 
-  const refSeries = tracks[0].series
+  const refSeries = tracks[0]!.series
   const step = refSeries.resolution_s * 1000
   const start = Math.floor(refSeries.from_ms / step) * step
   const span = Math.max(step, refSeries.to_ms - start)
@@ -211,7 +213,7 @@ export function TemperatureChartPanel({ sensors }: { sensors: Resource[] }) {
   const tracks: Track[] = active.flatMap((sensor, index) => {
     const data = queries[index]?.data
     if (!data?.points.length) return []
-    return [{ id: sensor.id, label: displayName(sensor), color: palette[index % palette.length], series: data }]
+    return [{ id: sensor.id, label: displayName(sensor), color: palette[index % palette.length] ?? palette[0]!, series: data }]
   })
 
   return (

@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   verify:
-    name: Verify tests and lint before release
+    name: Verify tests before release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -37,7 +37,6 @@ jobs:
         run: |
           bun install --cwd web --frozen-lockfile
           bun run --cwd web typecheck
-          bun run --cwd web lint
           bun run --cwd web test
           bun run --cwd web build
 

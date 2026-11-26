@@ -1,10 +1,10 @@
 import * as stylex from '@stylexjs/stylex'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { AlertTriangle } from 'lucide-react'
-import { usePreferences } from '../../app/preferences'
-import { Badge, Button, Empty, ErrorState, Loading, Panel, Source, layout } from '../../components/ui/ui'
-import { ApiError } from '../../lib/api/client'
-import type { Series, Step } from '../../lib/api/client'
+import { usePreferences } from '#/app/preferences'
+import { Badge, Button, Empty, ErrorState, Loading, Panel, Source, layout } from '#/components/ui/ui'
+import { ApiError } from '#/lib/api/client'
+import type { Series, Step } from '#/lib/api/client'
 import { useChartCursor } from './cursor'
 import { axisTime, dateTime, duration, formatValue, timeZoneLabel } from './format'
 import { useTimeRange } from './range'
@@ -75,7 +75,9 @@ function Chart({ series, color, title, scale }: {
   const { time, setTime } = useChartCursor()
   useEffect(() => {
     if (!element.current) return
-    const observer = new ResizeObserver(([entry]) => setWidth(Math.max(1, Math.floor(entry.contentRect.width))))
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) setWidth(Math.max(1, Math.floor(entry.contentRect.width)))
+    })
     observer.observe(element.current)
     return () => observer.disconnect()
   }, [])
@@ -95,9 +97,12 @@ function Chart({ series, color, title, scale }: {
       : niceCeiling(peak, series.unit, series.unit === '%' ? 100 : undefined)
     const x = (ts: number) => left + (ts - start) / span * (right - left)
     const y = (value: number) => bottom - (value - min) / (max - min) * (bottom - top)
-    const marks = series.points.filter((point, index, points) =>
-      point.coverage < 1 || ((index === 0 || point.bucket_start_ms - points[index - 1].bucket_start_ms !== step) &&
-        (index === points.length - 1 || points[index + 1].bucket_start_ms - point.bucket_start_ms !== step)))
+    const marks = series.points.filter((point, index, points) => {
+      const prev = points[index - 1]
+      const next = points[index + 1]
+      return point.coverage < 1 || ((!prev || point.bucket_start_ms - prev.bucket_start_ms !== step) &&
+        (!next || next.bucket_start_ms - point.bucket_start_ms !== step))
+    })
     return {
       min, max, x, y,
       line: plotPath(series, x, y),

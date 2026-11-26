@@ -1,4 +1,4 @@
-import { ApiError } from '../api/client'
+import { ApiError } from '#/lib/api/client'
 import { decodeSnapshot, openStream, readStream } from './stream'
 import type { LivePoint, Snapshot } from './stream'
 

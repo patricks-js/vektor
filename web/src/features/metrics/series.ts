@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
-import { useApi } from '../../lib/api/queries'
-import type { Series, Step } from '../../lib/api/client'
+import { useApi } from '#/lib/api/queries'
+import type { Series, Step } from '#/lib/api/client'
 import type { HistoricalRange } from './range'
 import { rangeMs } from './range'
 
@@ -30,6 +30,7 @@ export function bucketAt(series: Series, time: number) {
   while (low <= high) {
     const middle = Math.floor((low + high) / 2)
     const point = series.points[middle]
+    if (!point) return
     if (point.bucket_start_ms === target) return point
     if (point.bucket_start_ms < target) low = middle + 1
     else high = middle - 1
@@ -53,10 +54,10 @@ export function areaPath(series: Series, x: (time: number) => number, y: (value:
     const px = x(point.bucket_start_ms)
     const py = y(point.avg)
     const contiguous = previous !== undefined && point.bucket_start_ms - previous === step
-    if (!contiguous) {
+    const current = segments[segments.length - 1]
+    if (!contiguous || !current) {
       segments.push({ start: px, end: px, parts: [`M${px.toFixed(2)} ${py.toFixed(2)}`] })
     } else {
-      const current = segments[segments.length - 1]
       current.end = px
       current.parts.push(`L${px.toFixed(2)} ${py.toFixed(2)}`)
     }

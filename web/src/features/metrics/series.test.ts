@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Series } from '../../lib/api/client'
+import type { Series } from '#/lib/api/client'
 import { areaPath, bucketAt, historyCoverage, niceCeiling, plotPath } from './series'
 import { formatValue } from './format'
 

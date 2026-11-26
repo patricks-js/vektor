@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createDemoApi, createDemoLiveStore } from './mock'
-import { metric } from '../../features/metrics/catalog'
+import { metric } from '#/features/metrics/catalog'
 
 describe('demo mock layer', () => {
   it('serves host, resources, history series, and auth transitions without a backend', async () => {

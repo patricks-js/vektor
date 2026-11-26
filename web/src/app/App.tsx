@@ -2,24 +2,24 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useCallback, useEffect, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import { ErrorState, Loading } from '../components/ui/ui'
-import { AuthFrame, Login } from '../features/auth/Login'
-import { SessionContext } from '../features/auth/session'
-import { HostPage } from '../features/host/HostPage'
-import { InstanceDetail } from '../features/instances/InstanceDetail'
-import { InstancesPage } from '../features/instances/InstancesPage'
-import { usePeriodLink } from '../features/metrics/range'
-import { Overview } from '../features/overview/Overview'
-import { SettingsPage } from '../features/settings/SettingsPage'
-import { ApiError, createApi } from '../lib/api/client'
-import type { Session } from '../lib/api/client'
-import { ApiContext } from '../lib/api/queries'
-import { createDemoApi, createDemoLiveStore, isDemoMode } from '../lib/demo/mock'
-import { LiveContext } from '../lib/realtime/hooks'
-import { createLiveStore } from '../lib/realtime/store'
+import { ErrorState, Loading } from '#/components/ui/ui'
+import { AuthFrame, Login } from '#/features/auth/Login'
+import { SessionContext } from '#/features/auth/session'
+import { HostPage } from '#/features/host/HostPage'
+import { InstanceDetail } from '#/features/instances/InstanceDetail'
+import { InstancesPage } from '#/features/instances/InstancesPage'
+import { usePeriodLink } from '#/features/metrics/range'
+import { Overview } from '#/features/overview/Overview'
+import { SettingsPage } from '#/features/settings/SettingsPage'
+import { ApiError, createApi } from '#/lib/api/client'
+import type { Session } from '#/lib/api/client'
+import { ApiContext } from '#/lib/api/queries'
+import { createDemoApi, createDemoLiveStore, isDemoMode } from '#/lib/demo/mock'
+import { LiveContext } from '#/lib/realtime/hooks'
+import { createLiveStore } from '#/lib/realtime/store'
 import { PreferencesContext, isRange, isTheme, isTimeZone, readPreference, writePreference } from './preferences'
 import type { Theme, TimeRange, TimeZone } from './preferences'
-import { setDisplayTimeZone } from '../features/metrics/format'
+import { setDisplayTimeZone } from '#/features/metrics/format'
 import { returnPath } from './routes'
 import { Shell } from './Shell'
 
@@ -178,8 +178,8 @@ export function App() {
   })
 
   useEffect(() => {
-    if (theme === 'light') document.documentElement.dataset.theme = 'light'
-    else delete document.documentElement.dataset.theme
+    if (theme === 'light') document.documentElement.dataset['theme'] = 'light'
+    else delete document.documentElement.dataset['theme']
   }, [theme])
 
   return (

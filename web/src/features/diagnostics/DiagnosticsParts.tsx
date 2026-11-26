@@ -3,11 +3,11 @@ import { useQuery } from '@tanstack/react-query'
 import { Check, Copy, FileText, RefreshCw, X } from 'lucide-react'
 import { useEffect, useId, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Badge, Button, Empty, ErrorState, Loading, StatusDot, layout } from '../../components/ui/ui'
-import type { DiagnosticCheck, DiagnosticStatus } from '../../lib/api/client'
-import { useApi, useDiagnostics, useHealth } from '../../lib/api/queries'
-import { dateTime } from '../metrics/format'
-import { usePeriodLink } from '../metrics/range'
+import { Badge, Button, Empty, ErrorState, Loading, StatusDot, layout } from '#/components/ui/ui'
+import type { DiagnosticCheck, DiagnosticStatus } from '#/lib/api/client'
+import { useApi, useDiagnostics, useHealth } from '#/lib/api/queries'
+import { dateTime } from '#/features/metrics/format'
+import { usePeriodLink } from '#/features/metrics/range'
 
 const s = stylex.create({
   checkItem: {

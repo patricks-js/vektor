@@ -3,9 +3,9 @@ import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight } from 'luci
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { Badge, Button, Empty, ErrorState, Loading, Panel, SelectField, StatusDot, TextField, layout, tableStyles } from '../../components/ui/ui'
-import type { Resource, ResourceKind } from '../../lib/api/client'
-import { useResources } from '../../lib/api/queries'
+import { Badge, Button, Empty, ErrorState, Loading, Panel, SelectField, StatusDot, TextField, layout, tableStyles } from '#/components/ui/ui'
+import type { Resource, ResourceKind } from '#/lib/api/client'
+import { useResources } from '#/lib/api/queries'
 import { displayName } from './resourceMetadata'
 
 const s = stylex.create({
