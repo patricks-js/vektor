@@ -45,6 +45,9 @@ func main() {
 }
 
 func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	if len(args) > 0 && args[0] == "upgrade" {
+		return runUpgrade(ctx, args[1:], stdin, stdout, stderr)
+	}
 	var command string
 	if len(args) > 0 && (args[0] == "bootstrap-admin" || args[0] == "revoke-sessions" || args[0] == "doctor") {
 		command, args = args[0], args[1:]
@@ -77,7 +80,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	fs.BoolVar(&showVersion, "version", false, "Print vektord version and exit")
 	fs.BoolVar(&jsonOut, "json", false, "Output JSON (for doctor subcommand)")
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "Usage: vektord [bootstrap-admin | revoke-sessions | doctor] [flags]")
+		fmt.Fprintln(stderr, "Usage: vektord [bootstrap-admin | revoke-sessions | doctor | upgrade] [flags]")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {

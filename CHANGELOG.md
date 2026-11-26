@@ -6,6 +6,16 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o 
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-11-26
+
+### Added
+- **Atualização via CLI (`sudo vektord upgrade`):** novo subcomando no estilo Bun para atualizar o Vektor diretamente pelo terminal (`--check`, `--version`, `--dry-run`, `--yes`/`-y`, `--force`, `--no-backup`, `--data-dir`).
+  - Detecção automática do método de instalação (`.deb` via `dpkg-query`/`dpkg -i` ou tarball estático com substituição atômica de `vektord` e `vektor-ctl` e rollback automático se o serviço falhar ao reiniciar).
+  - Verificação obrigatória de integridade contra `SHA256SUMS.txt` da GitHub Release e validação de hosts de download confiáveis.
+  - Backup online automático do banco SQLite (`VACUUM INTO`) em `vektor.db.pre-<versão>.bak` antes de aplicar a atualização.
+- **Dica de atualização na UI (`Settings`):** banner de nova versão agora exibe o comando `sudo vektord upgrade` junto ao link para as notas da release.
+- **Pacote compartilhado `internal/update`:** lógica de SemVer e consulta a GitHub Releases unificada entre `GET /api/v1/update` e o subcomando `vektord upgrade`, com cobertura de testes unitários (`internal/update/upgrader_test.go`).
+
 ## [0.9.1] - 2026-11-25
 
 ### Fixed

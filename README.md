@@ -46,6 +46,13 @@ Or install manually from compiled binaries:
 sudo ./packaging/install.sh ./bin/vektord ./bin/vektor-ctl
 ```
 
+To upgrade an existing installation from the CLI (verifies `SHA256SUMS.txt`, backs up `vektor.db`, and applies `.deb` or atomic binary replacement automatically):
+
+```bash
+vektord upgrade --check
+sudo vektord upgrade
+```
+
 ## Frontend development & Demo mode
 
 Preview the full dashboard (including Host Management and Incus VMs/Containers) without running a daemon:

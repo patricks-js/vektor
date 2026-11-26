@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
+
+	"vektor/internal/update"
 )
 
 const (
@@ -35,7 +35,7 @@ type updateChecker struct {
 
 func newUpdateChecker(current string) *updateChecker {
 	return &updateChecker{
-		current: strings.TrimPrefix(strings.TrimSpace(current), "v"),
+		current: update.NormalizeVersion(current),
 		apiURL:  defaultReleaseAPIURL,
 		client:  &http.Client{Timeout: 4 * time.Second},
 	}
@@ -71,10 +71,10 @@ func (u *updateChecker) Check(ctx context.Context) UpdateInfo {
 					HTMLURL string `json:"html_url"`
 				}
 				if json.NewDecoder(io.LimitReader(resp.Body, 64*1024)).Decode(&release) == nil && release.TagName != "" {
-					latest := strings.TrimPrefix(strings.TrimSpace(release.TagName), "v")
+					latest := update.NormalizeVersion(release.TagName)
 					info.LatestVersion = latest
 					info.ReleaseURL = release.HTMLURL
-					info.UpdateAvailable = isNewerSemver(u.current, latest)
+					info.UpdateAvailable = update.IsNewerSemver(u.current, latest)
 				}
 			}
 		}
@@ -93,40 +93,8 @@ func (u *updateChecker) Check(ctx context.Context) UpdateInfo {
 	return info
 }
 
-func parseSemverCore(v string) ([3]int, bool, bool) {
-	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
-	if v == "" || v == "dev" {
-		return [3]int{}, false, false
-	}
-	core, pre, hasPre := strings.Cut(v, "-")
-	_ = pre
-	parts := strings.Split(core, ".")
-	if len(parts) != 3 {
-		return [3]int{}, false, false
-	}
-	var nums [3]int
-	for i, part := range parts {
-		n, err := strconv.Atoi(part)
-		if err != nil || n < 0 {
-			return [3]int{}, false, false
-		}
-		nums[i] = n
-	}
-	return nums, hasPre, true
-}
-
 func isNewerSemver(current, latest string) bool {
-	c, cPre, cOK := parseSemverCore(current)
-	l, lPre, lOK := parseSemverCore(latest)
-	if !cOK || !lOK {
-		return false
-	}
-	for i := range 3 {
-		if l[i] != c[i] {
-			return l[i] > c[i]
-		}
-	}
-	return cPre && !lPre
+	return update.IsNewerSemver(current, latest)
 }
 
 func (a *API) update(w http.ResponseWriter, r *http.Request) {

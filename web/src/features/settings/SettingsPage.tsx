@@ -63,6 +63,12 @@ const s = stylex.create({
     display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 13, fontWeight: 500,
     color: 'var(--vk-info)', textUnderlineOffset: 4, width: 'fit-content',
   },
+  updateCmd: {
+    fontFamily: 'var(--vk-font-mono)', fontSize: 12,
+    paddingBlock: 6, paddingInline: 10, borderRadius: 'var(--vk-radius-1)',
+    backgroundColor: 'var(--vk-surface-1)', borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--vk-border-subtle)',
+    color: 'var(--vk-text-primary)', width: 'fit-content', userSelect: 'all',
+  },
 })
 
 const sections = [
@@ -219,8 +225,9 @@ export function SettingsPage() {
               {update.data?.update_available && update.data.latest_version && (
                 <div {...stylex.props(s.updateBox)}>
                   <p {...stylex.props(layout.small)}>
-                    Uma nova versão (<strong>v{update.data.latest_version}</strong>) está disponível no GitHub Releases.
+                    Uma nova versão (<strong>v{update.data.latest_version}</strong>) está disponível no GitHub Releases. Para atualizar pelo terminal:
                   </p>
+                  <code {...stylex.props(s.updateCmd)}>sudo vektord upgrade</code>
                   {update.data.release_url && (
                     <a href={update.data.release_url} target="_blank" rel="noreferrer" {...stylex.props(s.updateLink)}>
                       Ver notas da versão v{update.data.latest_version} <ArrowUpRight size={14} aria-hidden />

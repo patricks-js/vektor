@@ -113,9 +113,16 @@ As releases são automatizadas via GitHub Actions (`.github/workflows/release.ym
 2. **Artefatos gerados automaticamente no GitHub Releases:**
    - Pacotes Debian/Ubuntu: `vektor_X.Y.Z_amd64.deb` e `vektor_X.Y.Z_arm64.deb` (contendo `vektord`, `vektor-ctl`, units `systemd` e `postinst` idempotente).
    - Tarballs estáticos: `vektor_X.Y.Z_linux_amd64.tar.gz` e `vektor_X.Y.Z_linux_arm64.tar.gz`.
-   - `checksums.txt` (SHA-256).
+   - `SHA256SUMS.txt` (SHA-256).
 
-3. **Atualização em servidores Ubuntu/Debian (ex.: `plino-server`):**
+3. **Atualização via CLI (recomendado):**
+   ```bash
+   vektord upgrade --check     # verifica sem root se há nova versão
+   sudo vektord upgrade        # baixa, valida SHA-256, faz backup do SQLite e aplica (.deb ou tarball)
+   ```
+   Flags úteis: `--dry-run`, `--yes` (`-y`), `--version X.Y.Z`, `--force`, `--no-backup`.
+
+   Ou manualmente em servidores Ubuntu/Debian:
    ```fish
    curl -fL -o /tmp/vektor_X.Y.Z_amd64.deb https://github.com/patricks-js/vektor/releases/download/vX.Y.Z/vektor_X.Y.Z_amd64.deb
    and sudo dpkg -i /tmp/vektor_X.Y.Z_amd64.deb
@@ -132,6 +139,7 @@ As releases são automatizadas via GitHub Actions (`.github/workflows/release.ym
 - **Fase 4 (`v0.8.x`) — Concluída:** Operações avançadas do Incus (terminal de comandos, console de boot, editor de recursos ao vivo, backups compactados, `vektor-ctl` concorrente) e motor de diagnóstico acionável (`vektord doctor` + drawer global com logs inline).
 - **Fase 5 (`v0.9.x`) — Concluída:** Containers de aplicação **OCI nativos no Incus** (Docker Hub/GHCR), Port Forwarding (`proxy` devices), variáveis de ambiente, download streaming de backups (`.tar.gz`), métricas históricas por instância no SQLite, worker assíncrono de webhooks e OpenAPI sincronizado.
 - **Rumo à `v1.0.0` (planejado):**
+  - **Assinatura criptográfica Ed25519 nas releases (`SHA256SUMS.txt.sig`):** assinar `SHA256SUMS.txt` no `.github/workflows/release.yml` com chave privada Ed25519 (via GitHub Secrets) e verificar no `vektord upgrade` usando chave pública embutida no binário (`crypto/ed25519`, zero dependências), protegendo contra comprometimento de token/release.
   - Storage Volumes customizados no Incus (criar/anexar volumes persistentes a containers/VMs).
   - Console PTY interativo completo (WebSocket) opcional para programas interativos.
   - Auditoria final de segurança, performance e cobertura E2E de estabilização `v1.0.0`.
